@@ -1,0 +1,26 @@
+[
+    {
+        "date": "2023-09-15T13:08:19.923000+00:00",
+        "session_key": 9159,
+        "meeting_key": 1219,
+        "driver_number": 55,
+        "n_gear": 8,
+        "speed": 315,
+        "drs": 12,
+        "throttle": 99,
+        "brake": 0,
+        "rpm": 11141
+    },
+    {
+        "date": "2023-09-15T13:35:41.808000+00:00",
+        "session_key": 9159,
+        "speed": 315,
+        "n_gear": 8,
+        "meeting_key": 1219,
+        "driver_number": 55,
+        "drs": 8,
+        "throttle": 57,
+        "brake": 100,
+        "rpm": 11023
+    }
+]
