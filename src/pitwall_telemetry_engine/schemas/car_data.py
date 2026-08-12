@@ -7,7 +7,7 @@ class CarData(BaseModel):
     date: datetime
     brake: int
     driver_number: int
-    drs: int
+    drs: int | None = None
     meeting_key: int
     session_key: int
     n_gear: int
