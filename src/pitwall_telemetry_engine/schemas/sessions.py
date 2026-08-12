@@ -10,7 +10,7 @@ class Sessions(BaseModel):
     country_name: str
     date_start: datetime
     date_end: datetime
-    circuit_name: str
+    circuit_short_name: str
     circuit_key: int
 
 
