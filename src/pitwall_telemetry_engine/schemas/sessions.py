@@ -12,6 +12,7 @@ class Sessions(BaseModel):
     date_end: datetime
     circuit_short_name: str
     circuit_key: int
+    year: int
 
 
     

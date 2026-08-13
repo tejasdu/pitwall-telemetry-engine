@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pitwall-telemetry-engine = "pitwall_telemetry_engine:main"
+pitwall-telemetry-engine = "pitwall_telemetry_engine.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.2,<0.13.0"]
