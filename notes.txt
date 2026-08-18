@@ -1,0 +1,8 @@
+---------------------------------------------
+PERSONAL NOTES FOR IMPROVEMENTS & THOUGHTS
+---------------------------------------------
+
+- Option to speed/slow telemetry tick rate of a past session while it's streaming (maybe user inputs the speed/factor?)
+- When session pause is there, and the it goes to the next tick, also show the flag info
+- Throttle / brake metrics for a session. or maybe over multiple races even; at the end; metrics on who used the brake the most, graph showing when they braked/accelerated the most
+    - 2D visual of the map for some metrics

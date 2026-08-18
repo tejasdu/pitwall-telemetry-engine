@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 .project-context.md
+.notes.txt
 
 # Virtual environments
 .venv
