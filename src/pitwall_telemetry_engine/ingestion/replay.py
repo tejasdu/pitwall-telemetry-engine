@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 from pitwall_telemetry_engine.schemas.car_data import CarData
 from datetime import datetime
 
-# List of telemetry ticks
+# List of telemetry ticks for streaming
 
 async def stream_telemetry(
     car_ticks: list[CarData], 
