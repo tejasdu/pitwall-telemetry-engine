@@ -31,10 +31,10 @@ async def stream_telemetry(
             print(
                 f"\n ⚠️  [SESSION PAUSE DETECTED] Gap of {pause_minutes:.1f} mins between "
                 f"{curr_tick.date.strftime('%H:%M:%S')} and {next_tick.date.strftime('%H:%M:%S')}. "
-                f"Fast-forwarding to next tick in 5 seconds... \n"
+                f"Fast-forwarding to next tick in 3 seconds... \n"
             )
 
-            await asyncio.sleep(5.0)
+            await asyncio.sleep(3.0)
             capped_diff = 0.0
         else:
             # 2. Saftey cap to make sure time diff isn't more than max pause allowed

@@ -1,7 +1,7 @@
 [project]
 name = "pitwall-telemetry-engine"
 version = "0.1.0"
-description = "Add your description here"
+description = "Real-time F1 Telemetry & Inference Engine"
 readme = "README.md"
 authors = [
     { name = "tejasdu", email = "tejasdu@umich.edu" }
@@ -10,8 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
-    "httpx>=0.28.1",
-    "pydantic>=2.13.4",
+    "prometheus-client>=0.20.0",
     "requests",
     "pandas",
 ]
