@@ -1,7 +1,8 @@
 import httpx
-from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.car_data import CarData
+from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.intervals import Intervals
+from pitwall_telemetry_engine.schemas.race_control import RaceControlMessage
 from pitwall_telemetry_engine.schemas.sessions import Sessions
 
 BASE_URL = "https://api.openf1.org/v1"
@@ -57,3 +58,11 @@ def get_intervals(
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
     records = response.json()
     return [Intervals(**r) for r in records]
+
+
+def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessage]:
+    """Fetches FIA Race Control messages and flag events for a session."""
+    url = f"{BASE_URL}/race_control?session_key={session_key}"
+    response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    records = response.json()
+    return [RaceControlMessage(**r) for r in records]

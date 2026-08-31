@@ -3,11 +3,13 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_car_data,
     get_drivers,
     get_intervals,
+    get_race_control,
     get_session,
 )
 from pitwall_telemetry_engine.ingestion.replay import stream_telemetry
 from pitwall_telemetry_engine.metrics.exporter import (
     start_metrics_server,
+    update_race_status,
     update_telemetry_metrics,
 )
 from pitwall_telemetry_engine.metrics.inferences import (
@@ -75,14 +77,20 @@ async def run_engine() -> None:
     interval_cursors = {driver_a_num: 0, driver_b_num: 0}
     latest_intervals = {}
 
-    # 5. Merge & sort chronologically into a single synchronized stream
+    # 5. Fetch FIA Race Control Track Flags & Messages
+    print(f"🏁 Fetching FIA Race Control messages & flag history...")
+    rc_messages = sorted(get_race_control(session.session_key), key=lambda x: x.date)
+    rc_cursor = 0
+    update_race_status(flag="GREEN", message="TRACK CLEAR / RACING")
+
+    # 6. Merge & sort chronologically into a single synchronized stream
     combined_ticks = sorted(race_ticks_a + race_ticks_b, key=lambda t: t.date)
     print(
         f"📊 Combined {len(combined_ticks)} synchronized battle ticks "
         f"({len(race_ticks_a)} for #{driver_a_num}, {len(race_ticks_b)} for #{driver_b_num}).\n"
     )
 
-    # 6. State tracking per driver
+    # 7. State tracking per driver
     prev_ticks = {}
 
     try:
@@ -90,6 +98,15 @@ async def run_engine() -> None:
             drv_num = curr_tick.driver_number
             drv = drivers.get(drv_num)
             drv_tag = f"[{drv.name_acronym:>3}]" if drv else f"[#{drv_num:>2}]"
+
+            # Advance Race Control Flag events
+            while rc_cursor < len(rc_messages) and rc_messages[rc_cursor].date <= curr_tick.date:
+                rc_event = rc_messages[rc_cursor]
+                rc_cursor += 1
+                if rc_event.flag or rc_event.message:
+                    update_race_status(flag=rc_event.flag, message=rc_event.message)
+                    flag_tag = f"🚩 [{rc_event.flag or 'NOTICE'}]"
+                    print(f"\n{'=' * 80}\n {flag_tag} {rc_event.message or ''}\n{'=' * 80}\n")
 
             # Advance intervals cursor for this driver up to the current tick's timestamp
             ints = driver_intervals.get(drv_num, [])
