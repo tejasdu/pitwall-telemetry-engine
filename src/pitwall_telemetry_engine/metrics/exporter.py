@@ -45,6 +45,18 @@ CAR_DECELERATION = Gauge(
     ["driver_number"],
 )
 
+CAR_INTERVAL_GAP = Gauge(
+    "f1_interval_gap_seconds",
+    "Timing interval gap to car ahead in seconds",
+    ["driver_number"],
+)
+
+DRS_THREAT_ACTIVE = Gauge(
+    "f1_drs_threat_active",
+    "DRS attack threat window active status (1 if gap <= 1.0s, else 0)",
+    ["driver_number"],
+)
+
 # 2. Prometheus Counters (Cumulative Event Tracking)
 HEAVY_BRAKING_TOTAL = Counter(
     "f1_heavy_braking_events_total",
@@ -70,6 +82,8 @@ def update_telemetry_metrics(
     driver: Driver | None = None,
     decel: float | None = None,
     is_heavy_brake: bool = False,
+    interval_gap: float | None = None,
+    is_drs_window: bool = False,
 ) -> None:
     """Updates Prometheus gauges and counters for a given telemetry tick."""
     drv_num = str(tick.driver_number)
@@ -89,6 +103,11 @@ def update_telemetry_metrics(
 
     if decel is not None:
         CAR_DECELERATION.labels(driver_number=drv_num).set(decel)
+
+    # Interval Gap and DRS Threat Window
+    if interval_gap is not None:
+        CAR_INTERVAL_GAP.labels(driver_number=drv_num).set(interval_gap)
+    DRS_THREAT_ACTIVE.labels(driver_number=drv_num).set(1 if is_drs_window else 0)
 
     # Update Counters
     TELEMETRY_TICKS_TOTAL.labels(driver_number=drv_num).inc()

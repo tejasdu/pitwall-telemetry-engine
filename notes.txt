@@ -6,3 +6,29 @@ PERSONAL NOTES FOR IMPROVEMENTS & THOUGHTS
 - When session pause is there, and the it goes to the next tick, also show the flag info
 - Throttle / brake metrics for a session. or maybe over multiple races even; at the end; metrics on who used the brake the most, graph showing when they braked/accelerated the most
     - 2D visual of the map for some metrics
+- Grafana / Dashboard Visuals:
+    - Handle Red Flag / Session Stoppage edge cases: Render vertical timeline annotations or a prominent "🚩 RACE SUSPENDED / RED FLAG" banner when all drivers are parked in pit lane at 0 km/h, preventing confusion with a frozen dashboard.
+
+---------------------------------------------------------------------------------
+FUTURE ARCHITECTURE BLUEPRINT: 20-DRIVER GRID, 2D TRACK MAP & SHIFTING LEADERBOARDS
+---------------------------------------------------------------------------------
+
+1. ⚠️ Real-World F1 Edge Cases to Account For:
+    - Driver Retirements (DNF): Car crashes/stops mid-race. Detect DNF state so dot fades/disappears from 2D map and doesn't skew active metrics.
+    - Lapped Drivers: Leaderboard sorting & intervals logic must parse string values like "+1 LAP" / "+2 LAPS" without breaking math comparisons.
+    - Pit Lane Geometry & Speeds: 60/80 km/h speed limiters, pit box dwell times, and distinguishing on-track path vs pit lane entry/exit.
+    - Multi-Frequency Stream Synchronization: 
+        * car_data (~10 Hz)
+        * location X,Y,Z (~3.5 Hz)
+        * intervals (~0.05 Hz per sector)
+        * race_control flags (sparse events)
+      Unified timeline clock/queue ensures non-blocking playback.
+    - Payload Memory Management: 20 cars x 40,000 records = ~800,000 records. Use streaming generators and Redis sliding buffers (MAXLEN ~ 5000).
+    - Track Coordinate Normalization: Min-Max scaling of raw OpenF1 (X, Y, Z) into 0-1000px 2D canvas coordinates.
+
+2. 🏗️ Pipeline Implementation Steps:
+    - Step 1: Add `Location` schema (schemas/location.py) for X, Y, Z parsing.
+    - Step 2: Build `GridState` Manager in memory to maintain real-time snapshots of all 20 drivers:
+        { driver_number: { pos, name, speed, throttle, brake, x, y, drs_threat, status: "ON_TRACK"|"PIT"|"DNF" } }
+    - Step 3: 2D Coordinate Projection helper to map circuit geometry.
+    - Step 4: High-frequency WebSocket (/ws/telemetry) or Redis Stream publisher for 60 FPS live frontend rendering.
