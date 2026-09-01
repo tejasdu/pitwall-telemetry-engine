@@ -1,24 +1,65 @@
 services:
+  # 1. Telemetry Ingestion & Inferences Engine (Python 3.12 + uv)
+  telemetry-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pitwall-telemetry-engine
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-PitwallRedisSecret2026SecureKey!}@redis:6379
+      - PLAYBACK_FACTOR=${PLAYBACK_FACTOR:-10.0}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # 2. In-Memory Redis 7 Stream Buffer (f1:telemetry:raw)
+  redis:
+    image: redis:7-alpine
+    container_name: pitwall-redis
+    command: >
+      redis-server --requirepass ${REDIS_PASSWORD:-PitwallRedisSecret2026SecureKey!} --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-PitwallRedisSecret2026SecureKey!}", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # 3. Prometheus Time-Series Metrics Database
   prometheus:
     image: prom/prometheus:latest
     container_name: pitwall-prometheus
+    depends_on:
+      - telemetry-engine
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     ports:
       - "9090:9090"
     restart: unless-stopped
 
+  # 4. Grafana Digital Pit-Wall Dashboard
   grafana:
     image: grafana/grafana:latest
     container_name: pitwall-grafana
     depends_on:
       - prometheus
     environment:
-      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=500ms
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-Formula1PitwallSecurePass2026!}
+      - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=500ms
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
@@ -30,3 +71,5 @@ services:
 
 volumes:
   grafana_data:
+  prometheus_data:
+  redis_data:
