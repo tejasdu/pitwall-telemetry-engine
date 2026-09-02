@@ -1,32 +1,27 @@
 services:
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: pitwall-prometheus
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  # 1. Redis 7 Stream Buffer (f1:telemetry:raw)
+  redis:
+    image: redis:7-alpine
+    container_name: pitwall-redis
     ports:
-      - "9090:9090"
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: pitwall-grafana
+  # 2. FastAPI Web App & 60 FPS WebSocket Server
+  pitwall-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pitwall-web
     depends_on:
-      - prometheus
+      - redis
     environment:
-      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=500ms
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - REDIS_URL=redis://redis:6379
     ports:
-      - "3000:3000"
+      - "8000:8000"
     restart: unless-stopped
 
 volumes:
-  grafana_data:
+  redis_data:

@@ -1,7 +1,7 @@
 [project]
 name = "pitwall-telemetry-engine"
-version = "0.1.0"
-description = "Real-time F1 Telemetry & Inference Engine"
+version = "0.2.0"
+description = "Real-time F1 Telemetry, Inferences & 60 FPS WebSocket Pitwall Engine"
 readme = "README.md"
 authors = [
     { name = "tejasdu", email = "tejasdu@umich.edu" }
@@ -10,14 +10,16 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
-    "prometheus-client>=0.20.0",
-    "requests",
-    "pandas",
     "redis>=5.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "websockets>=12.0",
+    "pandas",
 ]
 
 [project.scripts]
 pitwall-telemetry-engine = "pitwall_telemetry_engine.main:main"
+pitwall-web = "pitwall_telemetry_engine.api.app:start"
 
 [build-system]
 requires = ["uv_build>=0.12.2,<0.13.0"]
