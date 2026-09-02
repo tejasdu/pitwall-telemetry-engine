@@ -1,6 +1,6 @@
-# 🏎️ Pitwall Telemetry Engine
+# 🏎️ Pitwall Telemetry Engine MVP
 
-A high-performance real-time Formula 1 telemetry ingestion, replay, and strategy inference engine built with **Python 3.12**, **FastAPI**, **Pydantic v2**, **Prometheus**, **Grafana**, **Redis 7 Streams**, and **`uv`**.
+A high-performance real-time Formula 1 telemetry ingestion, replay, and strategy inference engine built with **Python 3.12**, **FastAPI**, **Pydantic v2**, **Prometheus**, **Grafana**, **Redis 7 Streams**, and **`uv`**. 
 
 ---
 

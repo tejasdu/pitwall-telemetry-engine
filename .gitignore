@@ -10,3 +10,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets & Environment Variables
+.env
+*.env

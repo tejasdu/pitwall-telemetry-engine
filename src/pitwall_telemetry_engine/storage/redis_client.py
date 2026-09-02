@@ -1,11 +1,12 @@
 import logging
+import os
 import redis.asyncio as aioredis
 from pitwall_telemetry_engine.schemas.car_data import CarData
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STREAM_KEY = "f1:telemetry:raw"
-DEFAULT_REDIS_URL = "redis://localhost:6379"
+DEFAULT_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 
 class RedisTelemetryBuffer:
