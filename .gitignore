@@ -7,6 +7,8 @@ wheels/
 *.egg-info
 .project-context.md
 .notes.txt
+.env
 
 # Virtual environments
 .venv
+
