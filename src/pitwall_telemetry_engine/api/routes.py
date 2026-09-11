@@ -4,6 +4,7 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_latest_race_session,
     get_sessions,
     get_track_geometry,
+    get_race_control
 )
 
 router = APIRouter(prefix="/api")
@@ -30,3 +31,8 @@ def drivers(session_key: str | int = "latest", driver_number: int | None = None)
 @router.get("/track-geometry")
 def track_geometry(session_key: str | int = "latest", sample_driver: int | None = None):
     return get_track_geometry(session_key=session_key, sample_driver=sample_driver)
+
+@router.get("/race-control")
+def race_control(session_key: str | int = "latest"):
+    return get_race_control(session_key=session_key)
+    

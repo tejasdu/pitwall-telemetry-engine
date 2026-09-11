@@ -1,42 +1,160 @@
----------------------------------------------------------------------------------
-PITWALL TELEMETRY ENGINE - ARCHITECTURAL EVOLUTION & v2 BLUEPRINT
----------------------------------------------------------------------------------
+=================================================================================
+PITWALL TELEMETRY ENGINE - ARCHITECTURAL EVOLUTION & v2 MASTER BLUEPRINT
+=================================================================================
 
-1. 📌 MILESTONES OVERVIEW:
-   - v1 (COMPLETED on branch 'grafana'): 
-     * Ingestion client (OpenF1), Pydantic v2 schemas, async replay at 10x with pause skipping.
-     * Strategy inferences (deceleration Δv/Δt, heavy braking counter, DRS attack threat).
-     * FIA Race Control track flags (Green, Yellow, Safety Car, Red Flag pit lane pause).
-     * Redis 7 Streams message buffer (MAXLEN ~ 5000) with password auth.
-     * Prometheus metrics exporter + Provisioned Grafana dashboard (1s poll).
-     * Production containerization via Docker Compose & Cloudflare Tunnel.
+1. 📌 PROJECT VISION & EVOLUTION:
+---------------------------------------------------------------------------------
+High-performance, broadcast-grade Formula 1 Digital Pit-Wall & Strategy Intelligence
+Engine. Designed as a real-time "second-screen companion" pairing alongside F1 race
+broadcasts or historical race replays (2023–2026 seasons from OpenF1).
 
-   - v2 (ACTIVE on branch 'live-pitwall'):
-     * Eliminates 1-second polling bottleneck by replacing Grafana with an on-demand, single-window 60 FPS web application.
-     * FastAPI async backend serving REST endpoints & WebSockets (/ws/telemetry).
-     * In-memory Redis 7 Stream buffer consumed directly by WebSocket manager.
-     * Interactive On-Demand Playback: Grand Prix session picker, driver battle selector, Play/Pause/Restart buttons, and dynamic speed multiplier slider (1x - 50x).
-     * 2D GPS Live Track Map (Canvas) with Min-Max normalized coordinates and moving car dots.
-     * 60 FPS Physics Interpolation (lerp) for smooth-sweeping analog needles, fluid speed counters, and real-time throttle/brake waveforms.
+- v1 (COMPLETED on branch 'grafana'):
+  * OpenF1 client ingestion, Pydantic v2 schemas, async replayer.
+  * Basic strategy inferences (deceleration Δv/Δt, heavy braking, DRS proximity).
+  * Redis 7 Streams message buffer with Prometheus exporter and Grafana dashboard.
+  * Preserved and locked on branch 'grafana'.
 
----------------------------------------------------------------------------------
-2. ⚠️ REAL-WORLD F1 EDGE CASES TO ACCOUNT FOR IN v2:
----------------------------------------------------------------------------------
-- Driver Retirements (DNF): Car crashes/stops mid-race. Detect DNF state so dot fades/disappears from 2D map.
-- Lapped Drivers: Leaderboard sorting & intervals logic must parse string values like "+1 LAP" / "+2 LAPS" safely.
-- Multi-Frequency Stream Synchronization: 
-    * car_data (~10 Hz)
-    * location X,Y,Z (~3.5 Hz)
-    * intervals (~0.05 Hz per sector)
-    * race_control flags (sparse events)
-  Unified timeline clock/queue ensures non-blocking playback.
-- Red Flag Suspensions: When all cars enter pit lane at 0 km/h, banner glows bright red and engine auto fast-forwards the 30-min pause in 3 seconds.
+- v2 (ACTIVE on branch 'live-pitwall'):
+  * Replaces Grafana's 1-second polling bottleneck with a dedicated, single-window,
+    broadcast-grade 60-120 FPS web application.
+  * Full-Field Macro View: Dynamic 20-driver timing tower + 2D GPS circuit map.
+  * Selective Micro View: Slide-up bottom telemetry drawer for 1-3 drivers.
+  * Midfield Drama & Battle Detection: Automated detection of DRS attacks, dive-bomb
+    overtakes, and DRS trains with one-click quick duel triggers.
+  * Hybrid WebSocket streaming: Full 20-car positions + deep telemetry for active drivers.
 
----------------------------------------------------------------------------------
-3. 🏗️ v2 IMPLEMENTATION TASKS:
----------------------------------------------------------------------------------
-- Task 1: Schema addition -> `schemas/location.py` (Cartesian X, Y, Z coordinates).
-- Task 2: OpenF1 client helper -> `get_location(session_key)`.
-- Task 3: WebSocket Connection Manager -> `api/websocket_manager.py` (Broadcasts Redis packets at 60 Hz).
-- Task 4: FastAPI Application & Endpoints -> `api/app.py` & `api/routes.py` (Sessions list, driver lists, playback controls).
-- Task 5: 60 FPS Single-Window Cockpit UI -> `static/` (`index.html`, `style.css`, `telemetry.js`, `track_map.js`).
+=================================================================================
+2. 🏎️ UI & UX ARCHITECTURE:
+=================================================================================
+
+A. TOP HEADER / FIA RACE CONTROL HUD:
+   - Grand Prix session title & circuit name (e.g., "2024 Dutch GP - Zandvoort").
+   - Lap Progress & Simulated Race Clock (e.g., "LAP 34 / 72 | ⏱️ 00:48:12").
+   - Official FIA Flag Status Banner:
+     * 🟢 Green: Track clear, DRS & attack inferences active.
+     * 🟡 Yellow: Sector caution; overtaking prohibited.
+     * 🔶 SC / VSC: Safety Car delta-driving; DRS disabled.
+     * 🔴 Red Flag: Session suspended; cars in pit lane; auto-fast-forwards pause in 3s.
+   - Session Selector: Dropdown to pick season (2023-2026) and Grand Prix.
+
+B. MACRO LAYER (FULL-FIELD RACE PICTURE - ALL 20 DRIVERS):
+   - Left Column: F1 TV Broadcast Live Timing Tower
+     * P1 to P20 standings with position delta (+/- vs grid start).
+     * Driver code (VER, NOR, LEC), car number, and team color accent bar.
+     * Intervals: Gap to leader and interval to car ahead.
+     * Tire Stint Badges: Compound (S, M, H, I, W) + tire age (e.g., "18L").
+     * Sector Matrix: Mini S1, S2, S3 pills (Yellow = personal slow, Green = personal best, Purple = session best).
+     * Pit status: "IN PIT" indicator and stop count (e.g., "1 STOP").
+     * ⚔️ Battle Icon: Glows between rows when cars are within < 1.000s DRS range.
+       Clicking ⚔️ instantly opens the Duel Drawer comparing those two drivers.
+
+   - Center/Right Column: 2D GPS Interactive Circuit Map (HTML5 Canvas)
+     * Real circuit geometry normalized from OpenF1 (X, Y) coordinates.
+     * 20 moving driver dots colored by team livery with floating acronym tags.
+     * Circuit markers: Sector splits (S1/S2/S3), DRS activation zones, Speed Trap.
+     * Visual Battle Tethers: Glowing bracket connecting cars battling within < 0.5s.
+     * Interactive: Clicking or hovering any car highlights them or opens their telemetry.
+
+C. SLIDE-UP TELEMETRY DRAWER (MICRO VIEW - 1 TO 3 SELECTED DRIVERS):
+   Sleek bottom drawer that slides up on demand:
+   - Mode 1: Single Driver Cockpit (1 selected)
+     * Digital Speedometer (km/h) + centered large gear indicator (1-8, N, R).
+     * F1 Shift-Light LED Bar: Green -> Red -> Flashing Blue at 12,500+ RPM limit.
+     * Pedal Dynamics: Smooth 0-100% throttle gauge + red brake pressure bar.
+     * Strategic telemetry: Deceleration gradient (Δv/Δt), apex minimum speed, tire wear.
+   - Mode 2: Head-to-Head Duel Mode (2 selected, e.g. Norris vs Verstappen)
+     * Side-by-side split cockpit cards (Papaya vs Navy).
+     * Center Duel Strip: Gap delta (+0.342s), speed delta (+7 km/h NOR), DRS attack alert.
+     * Overlapping Telemetry Waveform: 10-second scrolling canvas trace showing
+       Driver A vs Driver B throttle and brake lines (visualizing who braked later).
+   - Mode 3: Trio / Podium Mode (3 selected)
+     * Three compact synchronized telemetry cards side-by-side.
+
+D. INTERACTIVE PLAYBACK BAR:
+   - Play / Pause toggle, Reset to Lap 1, and scrubbing timeline.
+   - Playback speed multiplier (1x, 2x, 5x, 10x).
+   - Caution Skip Prompt: "⚠️ Safety Car active - Skip to Restart? [⏩ Skip]".
+
+=================================================================================
+3. ⚙️ TECHNICAL STACK & ARCHITECTURAL PIPELINE:
+=================================================================================
+
+- Backend Framework: FastAPI (Async ASGI) + Uvicorn
+- Ingestion Client: OpenF1 REST API (httpx with 60s resilient timeout)
+- Local Caching: In-memory / SQLite session cache to enable instant scrubbing
+  without hammering external OpenF1 rate limits.
+- Message Broker: Redis 7 Streams (sliding buffer MAXLEN ~ 5000)
+- Transport: WebSockets (/ws/telemetry) pushing at 30-60 Hz with sub-5ms latency.
+  * Bi-directional: Client sends driver selection / playback actions; server streams
+    merged 20-car positions + deep telemetry for active drawer drivers.
+- Frontend Engine: Vanilla HTML5 Canvas + Modern CSS (Zero heavy JS framework overhead).
+- Physics Smoothing: Client-side Linear Interpolation (lerp, alpha ~ 0.15) for fluid
+  60-120 FPS car gliding and analog gauge needles.
+- Sporting Rules Accountability:
+  * DRS threat calculations muted during Yellow / SC / VSC / Red Flag.
+  * Delta-regulated sector times under caution excluded from true race pace calculations.
+
+=================================================================================
+4. 🏗️ v2 IMPLEMENTATION ROADMAP:
+=================================================================================
+
+- Task 1: Schema Addition -> `schemas/location.py` [COMPLETED & TESTED]
+  * Cartesian X, Y, Z GPS coordinates with Pydantic v2 validation.
+
+- Task 2: OpenF1 Location & Track Geometry Helpers [DRAFTED in openf1_client.py]
+  * `get_location(session_key, driver_number)`
+  * `get_track_geometry(session_key)` (min-max bounding box and downsampling).
+
+- Task 3: Session Ingestion & Caching Layer
+  * Fetch and cache complete race session payloads (location, car_data, intervals, flags).
+
+- Task 4: Multi-Frequency Timeline Replayer & Battle Inference Engine
+  * Unified simulation clock (T_sim) synchronizing 100Hz car_data, 3.5Hz GPS, and intervals.
+  * Real-time ⚔️ battle detection (DRS threat < 1.0s, dive-bomb < 0.4s, DRS trains).
+  * Flag state tracking and metric pausing under caution.
+
+- Task 5: WebSocket Broadcast Manager (`api/websocket_manager.py`)
+  * Hybrid streaming: 20-car coordinates + deep telemetry for selected 1-3 drivers.
+
+- Task 6: FastAPI Application Endpoints (`api/app.py` & `api/routes.py`)
+  * `/api/sessions`, `/api/drivers`, `/api/track-geometry`, `/api/control`.
+
+- Task 7: Single-Window Cockpit UI (`static/`)
+  * `index.html`: Clean layout with Timing Tower, 2D Map, and Slide-Up Drawer.
+  * `style.css`: F1 dark broadcast theme, glassmorphism, glowing team colors.
+  * `telemetry.js`: WebSocket consumer, lerp animation loop, shift lights, waveforms.
+  * `track_map.js`: HTML5 Canvas 2D circuit renderer with moving driver dots and battle tethers.
+
+=================================================================================
+5. 🚀 PERFORMANCE OPTIMIZATION & FUTURE HORIZON ROADMAP:
+=================================================================================
+
+A. IMMEDIATE v2 CRITICAL OPTIMIZATIONS:
+   1. Disk-Backed Session Cache (openf1_client.py):
+      - Cache session payloads (car_data, location, intervals, laps, stints) in `.cache/sessions/{session_key}/`.
+      - Eliminates 10-30s OpenF1 API fetch overhead and HTTP 504 timeouts; instant 0.01s offline scrubbing.
+   2. Unified Simulation Clock & Multi-Stream Alignment:
+      - TimelineReplayer with synchronized T_sim cursor stepping at 30-60 Hz.
+      - Aligns 100Hz car_data, 3.5Hz GPS, 0.05Hz intervals, and race control flags without desync.
+   3. OffscreenCanvas Pre-rendering for Circuit Map:
+      - Pre-render static circuit geometry spline and sector markers onto an offscreen canvas once.
+      - On 60 FPS animation frames, blit cached background and draw 20 moving driver dots on top.
+
+B. v2.1 PERFORMANCE & TRANSPORT ENHANCEMENTS:
+   1. MessagePack / Binary WebSocket Protocols:
+      - Compress high-frequency JSON payloads into binary byte arrays (60-80% bandwidth reduction).
+   2. Client-Side Jitter Buffer + Lerp:
+      - 2-frame buffer on frontend to ensure fluid 60-120 FPS car gliding even during network hiccups.
+   3. Indexed Lap-Based Scrubber:
+      - Pre-computed lap start timestamps for instant seek jumps (e.g., jump straight to Lap 24 restart).
+
+C. v3 ADVANCED STRATEGY & AI HORIZON:
+   1. Undercut / Overcut Pit Window Predictor:
+      - Simulates ~20-24s pit lane loss against rival GPS intervals with estimated track rejoin position.
+   2. Tire Degradation & Stint Pace Drop-off Model:
+      - Lap time degradation curves per compound (S/M/H) vs tire age in laps to highlight pit windows.
+   3. DRS Train & Overtake Probability Index:
+      - Detects 3+ car DRS trains and predicts overtake likelihood based on delta speed at speed traps.
+   4. Team Radio Audio & Live Transcript HUD:
+      - OpenF1 /team_radio integration to stream driver audio clips and pop up real-time transcripts.
+=================================================================================

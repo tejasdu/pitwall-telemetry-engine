@@ -11,13 +11,15 @@ from pitwall_telemetry_engine.schemas.sessions import Sessions
 from pitwall_telemetry_engine.schemas.stints import Stints
 
 BASE_URL = "https://api.openf1.org/v1"
-DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)  # 60s timeout for large telemetry payloads
+DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)  
 
 
 def get_drivers(session_key: str | int = "latest") -> dict[int, Driver]:
     """Fetches drivers for a session and returns a Driver Registry lookup dictionary: {driver_number: Driver}."""
     url = f"{BASE_URL}/drivers?session_key={session_key}"
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
     drivers = response.json()
 
     driver_registry = {}
@@ -32,6 +34,8 @@ def get_session(session_key: str | int = "latest") -> Sessions:
     """Fetches session metadata for a given session_key."""
     url = f"{BASE_URL}/sessions?session_key={session_key}"
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
     sessions_data = response.json()
     if not sessions_data:
         raise ValueError(f"No session found for key: {session_key}")
@@ -39,12 +43,9 @@ def get_session(session_key: str | int = "latest") -> Sessions:
     return Sessions(**sessions_data[0])
 
 
-def get_sessions(
-    year: int | None = 2024,
-    session_name: str | None = "Race",
-) -> list[Sessions]:
-
+def get_sessions( year: int | None = 2024, session_name: str | None = "Race") -> list[Sessions]:
     """Fetches a list of Grand Prix sessions filtered by year and/or session name."""
+
     query_params = []
     if year is not None:
         query_params.append(f"year={year}")
@@ -55,6 +56,7 @@ def get_sessions(
     url = f"{BASE_URL}/sessions{query_str}"
 
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
     data = response.json()
     sessions = [Sessions(**s) for s in data]
 
@@ -72,6 +74,8 @@ def get_car_data(
         url += f"&driver_number={driver_number}"
 
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
     records = response.json()
     return [CarData(**r) for r in records]
 
@@ -85,6 +89,8 @@ def get_intervals(
         url += f"&driver_number={driver_number}"
 
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
     records = response.json()
     return [Intervals(**r) for r in records]
 
@@ -93,6 +99,8 @@ def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessa
     """Fetches FIA Race Control messages and flag events for a session."""
     url = f"{BASE_URL}/race_control?session_key={session_key}"
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+
     records = response.json()
     return [RaceControlMessage(**r) for r in records]
 
@@ -106,6 +114,8 @@ def get_location(
         url += f"&driver_number={driver_number}"
 
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+    
     records = response.json()
     return [Location(**r) for r in records]
 
@@ -123,6 +133,7 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     # Fetch sample location points
     locs = get_location(session_key, driver_number=sample_driver)
     # Filter out stationary / zero coordinates
+
     valid_points = [p for p in locs if p.x != 0 or p.y != 0]
 
     if not valid_points:
@@ -197,4 +208,5 @@ def get_latest_race_session() -> Sessions:
 
     # Sort descending by start date (latest first)
     valid_races.sort(key=lambda s: s["date_start"], reverse=True)
+    
     return Sessions(**valid_races[0])
