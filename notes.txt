@@ -130,9 +130,13 @@ D. INTERACTIVE PLAYBACK BAR:
 =================================================================================
 
 A. IMMEDIATE v2 CRITICAL OPTIMIZATIONS:
-   1. Disk-Backed Session Cache (openf1_client.py):
-      - Cache session payloads (car_data, location, intervals, laps, stints) in `.cache/sessions/{session_key}/`.
-      - Eliminates 10-30s OpenF1 API fetch overhead and HTTP 504 timeouts; instant 0.01s offline scrubbing.
+   1. Server-Side Disk-Backed Session Cache (openf1_client.py) [Scenario B - Cloud Architecture]:
+      - Caches full session payloads (car_data, location, intervals, laps, stints) in server storage `.cache/sessions/{session_key}/`.
+      - Lazy-Loading (Cache-Aside): When any user requests a new/uncached race, backend fetches once from OpenF1, saves to server disk, and streams.
+      - Shared Multi-User Cache: Once fetched by User 1, all subsequent users (Users 2–1000+) are served from disk in <10ms with 0 OpenF1 API calls.
+      - Zero Client Storage Overhead: End-users (browser/mobile) store 0MB locally; they only receive 60 FPS WebSocket frames.
+      - Storage Footprint & Cost: ~25-45MB per race (~1GB per 24-race season), fits inside free 20-40GB SSD quotas on cloud VPS (AWS, Fly.io, Render, Hetzner).
+      - Docker Persistence: Mount persistent volume to `/app/.cache` to preserve downloaded seasons across restarts/deployments.
    2. Unified Simulation Clock & Multi-Stream Alignment:
       - TimelineReplayer with synchronized T_sim cursor stepping at 30-60 Hz.
       - Aligns 100Hz car_data, 3.5Hz GPS, 0.05Hz intervals, and race control flags without desync.

@@ -1,6 +1,9 @@
+from pitwall_telemetry_engine.schemas import sessions
 from datetime import datetime, timezone
 from functools import lru_cache
 import httpx
+import json
+from pathlib import Path
 from pitwall_telemetry_engine.schemas.car_data import CarData
 from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.intervals import Intervals
@@ -12,15 +15,38 @@ from pitwall_telemetry_engine.schemas.stints import Stints
 
 BASE_URL = "https://api.openf1.org/v1"
 DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)  
+CACHE_DIR = Path(__file__).parent.parent.parent.parent / ".cache" / "sessions"
 
+def _fetch_or_cache(cache_file_path: Path, url: str) -> list[dict] | dict:
+    # 1. If cache hit, read from the file
+    if cache_file_path.exists():
+        raw_text = cache_file_path.read_text(encoding="utf-8")
+        return json.loads(raw_text)
+
+    # 2. Cache miss: call OpenF1 API to get data
+    response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+    data = response.json()
+
+    # 3. Save to disk for next time
+    cache_file_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_file_path.write_text(json.dumps(data), encoding="utf-8")
+
+    return data
+
+def _resolve_session_key(session_key: str | int = "latest") -> int:
+    if session_key == "latest" or session_key == "":
+        return get_latest_race_session().sessionkey
+    
+    return int(session_key)
 
 def get_drivers(session_key: str | int = "latest") -> dict[int, Driver]:
     """Fetches drivers for a session and returns a Driver Registry lookup dictionary: {driver_number: Driver}."""
-    url = f"{BASE_URL}/drivers?session_key={session_key}"
-    response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
-    response.raise_for_status()
 
-    drivers = response.json()
+    url = f"{BASE_URL}/drivers?session_key={session_key}"
+    cache_path = CACHE_DIR/ str(session_key) / "drivers.json"
+    
+    drivers = _fetch_or_cache(cache_path, url)
 
     driver_registry = {}
     for d in drivers:

@@ -31,7 +31,6 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 # Mount static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-
 @app.get("/")
 def root():
     return {
