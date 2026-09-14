@@ -108,8 +108,8 @@ D. INTERACTIVE PLAYBACK BAR:
 - Task 3: Session Ingestion & Caching Layer
   * Fetch and cache complete race session payloads (location, car_data, intervals, flags).
   * Storage Layout: `.cache/sessions/{session_key}/`
-    - Session-wide: `session.json`, `drivers.json`, `location.json`, `intervals.json`, `laps.json`, `stints.json`, `race_control.json`
-    - Per-driver high-frequency telemetry: `car_data/{driver_number}.json` (prevents OpenF1 timeouts and enables on-the-fly duel switching)
+    - Session-wide: `sessions.json`, `drivers.json`, `intervals.json`, `laps.json`, `stints.json`, `race_control.json`, `track_geometry.json`
+    - Per-driver datasets: `car_data/{driver_number}.json` and `location/{driver_number}.json` (prevents OpenF1 timeouts and enables on-the-fly duel switching)
   * Preload / Warm-up: `warm_session_cache(session_key)` bulk-fetches session payloads up front so telemetry runs with 0ms network lag.
   * Static Cache Policy: Completed historical sessions (2023-2026) are treated as immutable disk cache.
 
@@ -138,12 +138,12 @@ A. IMMEDIATE v2 CRITICAL OPTIMIZATIONS:
    1. Server-Side Disk-Backed Session Cache (openf1_client.py) [Scenario B - Cloud Architecture]:
       - Caches full session payloads in server storage `.cache/sessions/{session_key}/`.
       - Directory layout:
-        * `.cache/sessions/{session_key}/session.json` (metadata)
+        * `.cache/sessions/{session_key}/sessions.json` (metadata)
         * `.cache/sessions/{session_key}/drivers.json` (driver registry)
-        * `.cache/sessions/{session_key}/location.json` (full-grid GPS for 2D map)
+        * `.cache/sessions/{session_key}/location/{driver_number}.json` (GPS coordinates partitioned per car)
         * `.cache/sessions/{session_key}/intervals.json` (full-grid gaps for timing tower)
-        * `.cache/sessions/{session_key}/laps.json`, `stints.json`, `race_control.json`
-        * `.cache/sessions/{session_key}/car_data/{driver_number}.json` (partitioned per car)
+        * `.cache/sessions/{session_key}/laps.json`, `stints.json`, `race_control.json`, `track_geometry.json`
+        * `.cache/sessions/{session_key}/car_data/{driver_number}.json` (telemetry partitioned per car)
       - Lazy-Loading / Bulk Preload: When any user requests a new/uncached race, backend fetches once from OpenF1, saves to server disk, and streams.
       - Shared Multi-User Cache: Once fetched by User 1, all subsequent users (Users 2–1000+) are served from disk in <10ms with 0 OpenF1 API calls.
       - Zero Client Storage Overhead: End-users (browser/mobile) store 0MB locally; they only receive 60 FPS WebSocket frames.
@@ -173,4 +173,23 @@ C. v3 ADVANCED STRATEGY & AI HORIZON:
       - Detects 3+ car DRS trains and predicts overtake likelihood based on delta speed at speed traps.
    4. Team Radio Audio & Live Transcript HUD:
       - OpenF1 /team_radio integration to stream driver audio clips and pop up real-time transcripts.
+
+D. TELEMETRY STORAGE ARCHITECTURE & EVOLUTION SPECTRUM (INDUSTRY BEST PRACTICE):
+   - Level 1: Clean Boundary-Sanitized JSON File Cache (ACTIVE v2 IMPLEMENTATION):
+     * Boundary Sanitization: Strips unused OpenF1 API bloat via Pydantic schemas (model_dump) before writing to disk.
+     * Atomic Writes: POSIX temp file + atomic rename (.tmp -> .json) prevents corrupted cache files on interrupted downloads.
+     * Smart Formatting: Human-readable multi-line indent (indent=2) for metadata (sessions, drivers, stints, track_geometry);
+       minified compact formatting (separators=(',', ':')) for high-frequency telemetry (car_data, location, intervals).
+     * Benchmarks: Shrunk single race footprint from 560MB down to 199MB (~4.5GB for full 24-race season). 75k points read in 210ms.
+     * Advantage: 0 external dependencies, 100% human-inspectable in IDE, zero cognitive overhead during replayer/UI dev.
+
+   - Level 2: Columnar & Embedded Binary Storage (v2.2 / v3 Target):
+     * FastF1 / Parquet / DuckDB approach: Stores columnar telemetry arrays (speed, rpm, throttle) in Parquet or Arrow.
+     * Compression: Repeating F1 sensor values compress down to ~15-20MB per race (90%+ reduction) with instant vector slicing.
+     * SQLite / DuckDB: Single indexed file per session (`session_9472.duckdb`) enabling microsecond SQL range queries for timeline scrubbing.
+
+   - Level 3: Broadcast Production Time-Series DB (Cloud Scale Horizon):
+     * ClickHouse / InfluxDB / Redis Timeseries:
+     * Ingests and compresses millions of telemetry ticks/sec using Delta-of-Delta / Gorilla time-series compression.
+     * Designed for multi-tenant cloud deployments serving concurrent 10,000+ live broadcast second-screen spectator rooms.
 =================================================================================
