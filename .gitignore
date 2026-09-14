@@ -6,7 +6,8 @@ dist/
 wheels/
 *.egg-info
 .project-context.md
-.notes.txt
+notes.txt
+report.txt
 .env
 .cache
 
