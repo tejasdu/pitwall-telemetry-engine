@@ -107,6 +107,11 @@ D. INTERACTIVE PLAYBACK BAR:
 
 - Task 3: Session Ingestion & Caching Layer
   * Fetch and cache complete race session payloads (location, car_data, intervals, flags).
+  * Storage Layout: `.cache/sessions/{session_key}/`
+    - Session-wide: `session.json`, `drivers.json`, `location.json`, `intervals.json`, `laps.json`, `stints.json`, `race_control.json`
+    - Per-driver high-frequency telemetry: `car_data/{driver_number}.json` (prevents OpenF1 timeouts and enables on-the-fly duel switching)
+  * Preload / Warm-up: `warm_session_cache(session_key)` bulk-fetches session payloads up front so telemetry runs with 0ms network lag.
+  * Static Cache Policy: Completed historical sessions (2023-2026) are treated as immutable disk cache.
 
 - Task 4: Multi-Frequency Timeline Replayer & Battle Inference Engine
   * Unified simulation clock (T_sim) synchronizing 100Hz car_data, 3.5Hz GPS, and intervals.
@@ -131,8 +136,15 @@ D. INTERACTIVE PLAYBACK BAR:
 
 A. IMMEDIATE v2 CRITICAL OPTIMIZATIONS:
    1. Server-Side Disk-Backed Session Cache (openf1_client.py) [Scenario B - Cloud Architecture]:
-      - Caches full session payloads (car_data, location, intervals, laps, stints) in server storage `.cache/sessions/{session_key}/`.
-      - Lazy-Loading (Cache-Aside): When any user requests a new/uncached race, backend fetches once from OpenF1, saves to server disk, and streams.
+      - Caches full session payloads in server storage `.cache/sessions/{session_key}/`.
+      - Directory layout:
+        * `.cache/sessions/{session_key}/session.json` (metadata)
+        * `.cache/sessions/{session_key}/drivers.json` (driver registry)
+        * `.cache/sessions/{session_key}/location.json` (full-grid GPS for 2D map)
+        * `.cache/sessions/{session_key}/intervals.json` (full-grid gaps for timing tower)
+        * `.cache/sessions/{session_key}/laps.json`, `stints.json`, `race_control.json`
+        * `.cache/sessions/{session_key}/car_data/{driver_number}.json` (partitioned per car)
+      - Lazy-Loading / Bulk Preload: When any user requests a new/uncached race, backend fetches once from OpenF1, saves to server disk, and streams.
       - Shared Multi-User Cache: Once fetched by User 1, all subsequent users (Users 2–1000+) are served from disk in <10ms with 0 OpenF1 API calls.
       - Zero Client Storage Overhead: End-users (browser/mobile) store 0MB locally; they only receive 60 FPS WebSocket frames.
       - Storage Footprint & Cost: ~25-45MB per race (~1GB per 24-race season), fits inside free 20-40GB SSD quotas on cloud VPS (AWS, Fly.io, Render, Hetzner).
