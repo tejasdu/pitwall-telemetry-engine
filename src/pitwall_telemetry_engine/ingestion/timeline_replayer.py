@@ -20,11 +20,6 @@ from pitwall_telemetry_engine.schemas.location import Location
 
 
 class DriverTimeline:
-    """
-    Maintains a single driver's synchronized position and telemetry history.
-    Provides O(log N) binary search queries and sub-frame linear interpolation (lerp).
-    """
-
     def __init__(
         self,
         driver_number: int,
@@ -56,10 +51,6 @@ class DriverTimeline:
         self.telemetry = valid_tel
 
     def get_position_at(self, t_sim_sec: float) -> tuple[float, float] | None:
-        """
-        Returns linearly interpolated (X, Y) coordinates at timestamp t_sim_sec.
-        Provides sub-frame 60-120 FPS gliding from 3.5 Hz GPS data.
-        """
         if not self.loc_times:
             return None
 
@@ -105,7 +96,6 @@ class TimelineReplayer:
     Synchronizes 20-driver coordinates, active drawer telemetry, timing intervals,
     and FIA race flags under a unified simulation clock (T_sim) running at 30-60 Hz.
     """
-
     def __init__(self, session_key: str | int = "latest", fps: int = 30):
         self.session_key = session_key
         self.fps = fps
@@ -288,9 +278,6 @@ class TimelineReplayer:
         }
 
     def get_current_flag(self) -> str:
-        """
-        Returns the active FIA race flag (GREEN, YELLOW, SC, RED, CHEQUERED) at t_sim.
-        """
         return self.get_race_control_state()["flag"]
 
 
@@ -441,6 +428,7 @@ class TimelineReplayer:
         """
         step_dt = (dt if dt is not None else self.frame_interval) * self.playback_speed
         self.t_sim = min(self.end_time, self.t_sim + step_dt)
+        
         return self.assemble_frame(selected_drivers=selected_drivers)
 
     async def stream_frames(

@@ -6,7 +6,7 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_race_control,
     get_session,
 )
-from pitwall_telemetry_engine.ingestion.replay import stream_telemetry
+from pitwall_telemetry_engine.ingestion.timeline_replayer import stream_telemetry
 from pitwall_telemetry_engine.metrics.exporter import (
     start_metrics_server,
     update_race_status,
