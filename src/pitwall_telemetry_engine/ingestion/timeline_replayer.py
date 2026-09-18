@@ -20,6 +20,7 @@ from pitwall_telemetry_engine.schemas.location import Location
 
 
 class DriverTimeline:
+    """ Helper Class: Stores a specific Driver's Telemetry information to be used for a session Timeline Replayer """
     def __init__(
         self,
         driver_number: int,
@@ -75,9 +76,7 @@ class DriverTimeline:
         return (round(x, 2), round(y, 2))
 
     def get_telemetry_at(self, t_sim_sec: float) -> CarData | None:
-        """
-        Returns the closest telemetry tick (speed, rpm, gear, throttle, brake, drs) at t_sim_sec.
-        """
+        """ Returns the closest telemetry tick at t_sim_sec. """
         if not self.tel_times:
             return None
 
@@ -112,7 +111,7 @@ class TimelineReplayer:
 
         # 3. Playback control state
         self.is_playing = False
-        self.playback_speed = 1.0  # 1x, 2x, 5x, 10x
+        self.playback_speed = 1.0  # 1x, 2x, 5x, 10x TO CHANGE; SHOULD LET USER CONTROL (FOR MODE A: Session Replay)
 
         # 4. Load timelines for all 20 drivers
         print(f"🏎️  Loading 20-driver grid for {self.session.circuit_short_name} ({self.session.year})...")
@@ -282,9 +281,7 @@ class TimelineReplayer:
 
 
     def get_latest_intervals(self) -> dict[int, dict]:
-        """
-        Returns the latest gap and interval for each driver at t_sim.
-        """
+        """ Returns the latest gap and interval for each driver at t_sim. """
         if not self.interval_times:
             return {}
 
@@ -310,9 +307,8 @@ class TimelineReplayer:
     def detect_battles(self, flag: str, intervals_map: dict[int, dict]) -> list[dict]:
         """
         Identifies active battles, DRS attack windows, and dive-bomb threats.
-        Automatically mutes DRS threats under Yellow / Safety Car / Red Flag conditions.
         """
-        # Sporting rule: DRS & overtaking prohibited under caution flags
+        # DRS & overtaking is prohibited under a flag
         if flag in ("YELLOW", "SC", "RED"):
             return []
 
@@ -423,9 +419,7 @@ class TimelineReplayer:
         }
 
     def step(self, dt: float | None = None, selected_drivers: list[int] | None = None) -> dict:
-        """
-        Advances the simulation clock by one frame interval and returns the new frame.
-        """
+        """ Advances the simulation clock by one frame interval & returns new frame"""
         step_dt = (dt if dt is not None else self.frame_interval) * self.playback_speed
         self.t_sim = min(self.end_time, self.t_sim + step_dt)
         
@@ -434,9 +428,7 @@ class TimelineReplayer:
     async def stream_frames(
         self, get_selected_drivers_cb=None
     ):
-        """
-        Drift-compensated async generator emitting broadcast frames at the target FPS.
-        """
+        """ Streams broadcast frames at the target FPS. """
         self.is_playing = True
         frame_dt = self.frame_interval
 

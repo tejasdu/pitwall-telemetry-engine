@@ -12,7 +12,7 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# Allow Cross-Origin Requests (CORS) for seamless local development
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,14 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include our REST API endpoints
 app.include_router(router)
 
-# Mount static files directory (where our HTML/CSS/JS frontend will live)
+# Static files directory for frontend
 STATIC_DIR = Path(__file__).parent.parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
-# Mount static assets
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
@@ -41,7 +39,6 @@ def root():
 
 
 def start():
-    """CLI runner called by 'pitwall-web' or 'uv run pitwall-web'."""
     uvicorn.run(
         "pitwall_telemetry_engine.api.app:app",
         host="0.0.0.0",

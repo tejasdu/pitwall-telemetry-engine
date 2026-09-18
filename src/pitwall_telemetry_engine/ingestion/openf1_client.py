@@ -24,11 +24,8 @@ def _fetch_or_cache(
     schema_cls: type[BaseModel] | None = None,
     indent: int | None = None,
 ) -> list[dict] | dict:
-    """
-    Reads dataset from local disk cache if present.
-    On cache miss, fetches from OpenF1 API, filters records by schema (stripping unused fields),
-    and writes compact or formatted JSON atomically to disk.
-    """
+    """ Helper function: Lazy cacheing mechanism for OpenF1 API calls, saving straight to disk  """
+
     # 1. If cache hit, read from disk
     if cache_file_path.exists():
         raw_text = cache_file_path.read_text(encoding="utf-8")
@@ -37,14 +34,14 @@ def _fetch_or_cache(
     # 2. Cache miss: query OpenF1 API
     response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
 
-    # OpenF1 returns 404 with {"detail": "No results found."} when no records exist
+    # OpenF1 returns 404; no records
     if response.status_code == 404:
         data = []
     else:
         response.raise_for_status()
         data = response.json()
 
-    # Filter records through Pydantic schema to strip unused OpenF1 fields and save disk space
+    # Filter records through Pydantic schema 
     if schema_cls is not None and isinstance(data, list):
         data = [schema_cls(**item).model_dump(mode="json") for item in data]
     elif schema_cls is not None and isinstance(data, dict):
@@ -63,19 +60,20 @@ def _fetch_or_cache(
 
 
 def _resolve_session_key(session_key: str | int = "latest") -> int:
+     """ Helper function: returns session key for the latest race session """
+     
     if session_key == "latest" or session_key == "":
         return get_latest_race_session().session_key
     return int(session_key)
 
 
 def get_drivers(session_key: str | int = "latest") -> dict[int, Driver]:
-    """Fetches drivers for a session and returns a Driver Registry lookup dictionary: {driver_number: Driver}."""
+    """Fetches drivers for a session and returns a Driver Registry lookup dictionary"""
     resolved_key = _resolve_session_key(session_key)
 
     url = f"{BASE_URL}/drivers?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "drivers.json"
 
-    # Human-readable indented metadata
     drivers = _fetch_or_cache(cache_path, url, schema_cls=Driver, indent=2)
 
     driver_registry = {}
@@ -93,7 +91,6 @@ def get_session(session_key: str | int = "latest") -> Sessions:
     url = f"{BASE_URL}/sessions?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "sessions.json"
 
-    # Human-readable indented metadata
     sessions_data = _fetch_or_cache(cache_path, url, schema_cls=Sessions, indent=2)
 
     if not sessions_data:
@@ -117,11 +114,9 @@ def get_sessions(year: int | None = 2024, session_name: str | None = "Race") -> 
     name_tag = session_name if session_name is not None else "all"
     cache_path = CACHE_DIR.parent / "calendar" / f"sessions_{year_tag}_{name_tag}.json"
 
-    # Human-readable indented metadata
     data = _fetch_or_cache(cache_path, url, schema_cls=Sessions, indent=2)
     sessions = [Sessions(**s) for s in data]
 
-    # Sort chronologically by start date descending (latest first)
     sessions.sort(key=lambda s: s.date_start, reverse=True)
     return sessions
 
@@ -129,10 +124,7 @@ def get_sessions(year: int | None = 2024, session_name: str | None = "Race") -> 
 def get_car_data(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[CarData]:
-    """
-    Fetches raw car telemetry ticks for a session for a specific driver.
-    Minified on disk and stripped of unused API fields for maximum I/O throughput.
-    """
+    """ Fetches raw car telemetry ticks for a session for a specific driver. """
     if driver_number is None:
         raise ValueError(
             "driver_number is required for get_car_data. OpenF1 times out when requesting full-field telemetry."
@@ -142,7 +134,6 @@ def get_car_data(
     url = f"{BASE_URL}/car_data?session_key={resolved_key}&driver_number={driver_number}"
     cache_path = CACHE_DIR / str(resolved_key) / "car_data" / f"{driver_number}.json"
 
-    # High-frequency telemetry: minified, schema-filtered
     records = _fetch_or_cache(cache_path, url, schema_cls=CarData, indent=None)
     return [CarData(**r) for r in records]
 
@@ -169,7 +160,6 @@ def get_intervals(
         url = f"{BASE_URL}/intervals?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    # Minified, schema-filtered
     records = _fetch_or_cache(cache_path, url, schema_cls=Intervals, indent=None)
     return [Intervals(**r) for r in records]
 
@@ -180,7 +170,6 @@ def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessa
     url = f"{BASE_URL}/race_control?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "race_control.json"
 
-    # Human-readable indented metadata
     records = _fetch_or_cache(cache_path, url, schema_cls=RaceControlMessage, indent=2)
     return [RaceControlMessage(**r) for r in records]
 
@@ -188,10 +177,7 @@ def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessa
 def get_location(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[Location]:
-    """
-    Fetches Cartesian GPS coordinates (X, Y, Z) for track positioning.
-    Minified on disk and stripped of unused API fields for maximum I/O throughput.
-    """
+    """ Fetches Cartesian GPS coordinates (X, Y, Z) for track positioning. """
     resolved_key = _resolve_session_key(session_key)
 
     if driver_number is not None:
@@ -212,7 +198,7 @@ def get_location(
 
 def get_track_geometry(session_key: str | int = "latest", sample_driver: int | None = None) -> dict:
     """
-    Extracts and normalizes circuit track geometry points from location data.
+    Extracts and normalizes circuit track geometry points from location data of one driver.
     Caches the pre-calculated geometry directly to avoid re-downsampling 50k points on each call.
     """
     resolved_key = _resolve_session_key(session_key)
@@ -265,6 +251,7 @@ def get_laps(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[Laps]:
     """Fetches lap timings, sector durations, and speed trap figures for a session."""
+
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "laps.json"
 
@@ -282,7 +269,6 @@ def get_laps(
         url = f"{BASE_URL}/laps?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    # Minified, schema-filtered
     records = _fetch_or_cache(cache_path, url, schema_cls=Laps, indent=None)
     return [Laps(**r) for r in records]
 
@@ -291,6 +277,7 @@ def get_stints(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[Stints]:
     """Fetches tire stint records (compound, start/end lap, tire age) for a session."""
+
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "stints.json"
 
@@ -308,7 +295,7 @@ def get_stints(
         url = f"{BASE_URL}/stints?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    # Human-readable indented metadata
+
     records = _fetch_or_cache(cache_path, url, schema_cls=Stints, indent=2)
     return [Stints(**r) for r in records]
 
@@ -318,6 +305,7 @@ def warm_session_cache(session_key: str | int = "latest", driver_numbers: list[i
     Preloads and caches all core datasets for a session to local disk.
     Guarantees 0ms network latency during live replay and on-the-fly driver switching.
     """
+
     resolved_key = _resolve_session_key(session_key)
 
     # 1. Session metadata & Driver roster
