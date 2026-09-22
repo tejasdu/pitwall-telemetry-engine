@@ -60,8 +60,7 @@ def _fetch_or_cache(
 
 
 def _resolve_session_key(session_key: str | int = "latest") -> int:
-     """ Helper function: returns session key for the latest race session """
-     
+     """ Helper function: returns session key for the latest race session """  
     if session_key == "latest" or session_key == "":
         return get_latest_race_session().session_key
     return int(session_key)
