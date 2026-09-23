@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 
+
 class Stints(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

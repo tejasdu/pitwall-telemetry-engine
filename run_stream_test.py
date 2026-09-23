@@ -1,4 +1,5 @@
 import asyncio
+
 from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer
 
 
@@ -34,7 +35,9 @@ async def main():
                 b0 = battles[0]
                 battle_str += f" (#{b0['attacker']} gap: {b0['gap']}s)"
 
-            print(f"[{iso_time}] [{flag:9s}] {pct:5.1f}% | P1 {p1_str:<18s} | {ver_stats} | {battle_str}")
+            print(
+                f"[{iso_time}] [{flag:9s}] {pct:5.1f}% | P1 {p1_str:<18s} | {ver_stats} | {sai_stats} | {battle_str}"
+            )
 
     except KeyboardInterrupt:
         print("\n🛑 Stream stopped by user.")

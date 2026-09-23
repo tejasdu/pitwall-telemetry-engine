@@ -1,7 +1,8 @@
 import asyncio
+import time
 from bisect import bisect_right
 from datetime import datetime, timezone
-import time
+
 from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_car_data,
     get_drivers,
@@ -20,7 +21,8 @@ from pitwall_telemetry_engine.schemas.location import Location
 
 
 class DriverTimeline:
-    """ Helper Class: Stores a specific Driver's Telemetry information to be used for a session Timeline Replayer """
+    """Helper Class: Stores a specific Driver's Telemetry information to be used for a session Timeline Replayer"""
+
     def __init__(
         self,
         driver_number: int,
@@ -76,7 +78,7 @@ class DriverTimeline:
         return (round(x, 2), round(y, 2))
 
     def get_telemetry_at(self, t_sim_sec: float) -> CarData | None:
-        """ Returns the closest telemetry tick at t_sim_sec. """
+        """Returns the closest telemetry tick at t_sim_sec."""
         if not self.tel_times:
             return None
 
@@ -95,6 +97,7 @@ class TimelineReplayer:
     Synchronizes 20-driver coordinates, active drawer telemetry, timing intervals,
     and FIA race flags under a unified simulation clock (T_sim) running at 30-60 Hz.
     """
+
     def __init__(self, session_key: str | int = "latest", fps: int = 30):
         self.session_key = session_key
         self.fps = fps
@@ -111,10 +114,14 @@ class TimelineReplayer:
 
         # 3. Playback control state
         self.is_playing = False
-        self.playback_speed = 1.0  # 1x, 2x, 5x, 10x TO CHANGE; SHOULD LET USER CONTROL (FOR MODE A: Session Replay)
+        self.playback_speed = (
+            1.0  # 1x, 2x, 5x, 10x TO CHANGE; SHOULD LET USER CONTROL (FOR MODE A: Session Replay)
+        )
 
         # 4. Load timelines for all 20 drivers
-        print(f"🏎️  Loading 20-driver grid for {self.session.circuit_short_name} ({self.session.year})...")
+        print(
+            f"🏎️  Loading 20-driver grid for {self.session.circuit_short_name} ({self.session.year})..."
+        )
         self.timelines: dict[int, DriverTimeline] = {}
         for d_num in self.drivers.keys():
             locs = get_location(session_key, driver_number=d_num)
@@ -259,7 +266,9 @@ class TimelineReplayer:
                         sector_status[msg.sector] = "CLEAR"
 
             # Global track clear
-            if msg.scope == "Track" and (flag_val in ("CLEAR", "GREEN") or "TRACK CLEAR" in msg_text):
+            if msg.scope == "Track" and (
+                flag_val in ("CLEAR", "GREEN") or "TRACK CLEAR" in msg_text
+            ):
                 if not any(status == "YELLOW" for status in sector_status.values()):
                     active_flag = "GREEN"
                     break
@@ -279,9 +288,8 @@ class TimelineReplayer:
     def get_current_flag(self) -> str:
         return self.get_race_control_state()["flag"]
 
-
     def get_latest_intervals(self) -> dict[int, dict]:
-        """ Returns the latest gap and interval for each driver at t_sim. """
+        """Returns the latest gap and interval for each driver at t_sim."""
         if not self.interval_times:
             return {}
 
@@ -327,9 +335,7 @@ class TimelineReplayer:
                     else None
                 )
                 dive_bomb = (
-                    gap <= 0.400
-                    and curr_tick is not None
-                    and is_heavy_braking(curr_tick, decel)
+                    gap <= 0.400 and curr_tick is not None and is_heavy_braking(curr_tick, decel)
                 )
 
                 battles.append(
@@ -402,9 +408,7 @@ class TimelineReplayer:
 
         return {
             "t_sim": self.t_sim,
-            "t_sim_iso": datetime.fromtimestamp(
-                self.t_sim, tz=timezone.utc
-            ).isoformat(),
+            "t_sim_iso": datetime.fromtimestamp(self.t_sim, tz=timezone.utc).isoformat(),
             "progress_pct": progress_pct,
             "is_playing": self.is_playing,
             "playback_speed": self.playback_speed,
@@ -419,27 +423,21 @@ class TimelineReplayer:
         }
 
     def step(self, dt: float | None = None, selected_drivers: list[int] | None = None) -> dict:
-        """ Advances the simulation clock by one frame interval & returns new frame"""
+        """Advances the simulation clock by one frame interval & returns new frame"""
         step_dt = (dt if dt is not None else self.frame_interval) * self.playback_speed
         self.t_sim = min(self.end_time, self.t_sim + step_dt)
-        
+
         return self.assemble_frame(selected_drivers=selected_drivers)
 
-    async def stream_frames(
-        self, get_selected_drivers_cb=None
-    ):
-        """ Streams broadcast frames at the target FPS. """
+    async def stream_frames(self, get_selected_drivers_cb=None):
+        """Streams broadcast frames at the target FPS."""
         self.is_playing = True
         frame_dt = self.frame_interval
 
         while self.is_playing and self.t_sim < self.end_time:
             loop_start = time.perf_counter()
 
-            selected = (
-                get_selected_drivers_cb()
-                if callable(get_selected_drivers_cb)
-                else None
-            )
+            selected = get_selected_drivers_cb() if callable(get_selected_drivers_cb) else None
 
             # Advance clock and emit frame
             frame = self.step(selected_drivers=selected)

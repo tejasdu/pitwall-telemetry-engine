@@ -1,9 +1,11 @@
+import json
 from datetime import datetime, timezone
 from functools import lru_cache
-import httpx
-import json
 from pathlib import Path
+
+import httpx
 from pydantic import BaseModel
+
 from pitwall_telemetry_engine.schemas.car_data import CarData
 from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.intervals import Intervals
@@ -24,7 +26,7 @@ def _fetch_or_cache(
     schema_cls: type[BaseModel] | None = None,
     indent: int | None = None,
 ) -> list[dict] | dict:
-    """ Helper function: Lazy cacheing mechanism for OpenF1 API calls, saving straight to disk  """
+    """Helper function: Lazy cacheing mechanism for OpenF1 API calls, saving straight to disk"""
 
     # 1. If cache hit, read from disk
     if cache_file_path.exists():
@@ -41,7 +43,7 @@ def _fetch_or_cache(
         response.raise_for_status()
         data = response.json()
 
-    # Filter records through Pydantic schema 
+    # Filter records through Pydantic schema
     if schema_cls is not None and isinstance(data, list):
         data = [schema_cls(**item).model_dump(mode="json") for item in data]
     elif schema_cls is not None and isinstance(data, dict):
@@ -51,16 +53,14 @@ def _fetch_or_cache(
     cache_file_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = cache_file_path.with_suffix(".tmp")
     separators = (",", ":") if indent is None else None
-    temp_path.write_text(
-        json.dumps(data, indent=indent, separators=separators), encoding="utf-8"
-    )
+    temp_path.write_text(json.dumps(data, indent=indent, separators=separators), encoding="utf-8")
     temp_path.replace(cache_file_path)
 
     return data
 
 
 def _resolve_session_key(session_key: str | int = "latest") -> int:
-     """ Helper function: returns session key for the latest race session """  
+    """Helper function: returns session key for the latest race session"""
     if session_key == "latest" or session_key == "":
         return get_latest_race_session().session_key
     return int(session_key)
@@ -123,7 +123,7 @@ def get_sessions(year: int | None = 2024, session_name: str | None = "Race") -> 
 def get_car_data(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[CarData]:
-    """ Fetches raw car telemetry ticks for a session for a specific driver. """
+    """Fetches raw car telemetry ticks for a session for a specific driver."""
     if driver_number is None:
         raise ValueError(
             "driver_number is required for get_car_data. OpenF1 times out when requesting full-field telemetry."
@@ -176,7 +176,7 @@ def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessa
 def get_location(
     session_key: str | int = "latest", driver_number: int | None = None
 ) -> list[Location]:
-    """ Fetches Cartesian GPS coordinates (X, Y, Z) for track positioning. """
+    """Fetches Cartesian GPS coordinates (X, Y, Z) for track positioning."""
     resolved_key = _resolve_session_key(session_key)
 
     if driver_number is not None:
@@ -246,9 +246,7 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     return geometry
 
 
-def get_laps(
-    session_key: str | int = "latest", driver_number: int | None = None
-) -> list[Laps]:
+def get_laps(session_key: str | int = "latest", driver_number: int | None = None) -> list[Laps]:
     """Fetches lap timings, sector durations, and speed trap figures for a session."""
 
     resolved_key = _resolve_session_key(session_key)
@@ -269,12 +267,10 @@ def get_laps(
         cache_path = full_cache_path
 
     records = _fetch_or_cache(cache_path, url, schema_cls=Laps, indent=None)
-    return [Laps(**r) for r in records] 
+    return [Laps(**r) for r in records]
 
 
-def get_stints(
-    session_key: str | int = "latest", driver_number: int | None = None
-) -> list[Stints]:
+def get_stints(session_key: str | int = "latest", driver_number: int | None = None) -> list[Stints]:
     """Fetches tire stint records (compound, start/end lap, tire age) for a session."""
 
     resolved_key = _resolve_session_key(session_key)
@@ -294,12 +290,13 @@ def get_stints(
         url = f"{BASE_URL}/stints?session_key={resolved_key}"
         cache_path = full_cache_path
 
-
     records = _fetch_or_cache(cache_path, url, schema_cls=Stints, indent=2)
     return [Stints(**r) for r in records]
 
 
-def warm_session_cache(session_key: str | int = "latest", driver_numbers: list[int] | None = None) -> None:
+def warm_session_cache(
+    session_key: str | int = "latest", driver_numbers: list[int] | None = None
+) -> None:
     """
     Preloads and caches all core datasets for a session to local disk.
     Guarantees 0ms network latency during live replay and on-the-fly driver switching.
@@ -310,7 +307,9 @@ def warm_session_cache(session_key: str | int = "latest", driver_numbers: list[i
     # 1. Session metadata & Driver roster
     session = get_session(resolved_key)
     registry = get_drivers(resolved_key)
-    print(f"🏎️  Warming cache for session {resolved_key}: {session.circuit_short_name} ({session.year}) - {len(registry)} drivers")
+    print(
+        f"🏎️  Warming cache for session {resolved_key}: {session.circuit_short_name} ({session.year}) - {len(registry)} drivers"
+    )
 
     # 2. Macro race datasets (Full 20-car field)
     print("  📍 Pre-calculating track geometry...")
@@ -326,7 +325,11 @@ def warm_session_cache(session_key: str | int = "latest", driver_numbers: list[i
     print(f"  🗺️  Caching GPS locations for {len(all_drivers)} drivers...")
     for idx, d_num in enumerate(all_drivers, start=1):
         get_location(resolved_key, driver_number=d_num)
-        print(f"     [{idx:02d}/{len(all_drivers):02d}] Driver #{d_num} locations cached", end="\r", flush=True)
+        print(
+            f"     [{idx:02d}/{len(all_drivers):02d}] Driver #{d_num} locations cached",
+            end="\r",
+            flush=True,
+        )
     print()
 
     # 4. High-frequency telemetry for specified or all drivers
@@ -334,7 +337,11 @@ def warm_session_cache(session_key: str | int = "latest", driver_numbers: list[i
     print(f"  ⚡ Caching high-frequency telemetry for {len(target_drivers)} drivers...")
     for idx, d_num in enumerate(target_drivers, start=1):
         get_car_data(resolved_key, driver_number=d_num)
-        print(f"     [{idx:02d}/{len(target_drivers):02d}] Driver #{d_num} car_data cached", end="\r", flush=True)
+        print(
+            f"     [{idx:02d}/{len(target_drivers):02d}] Driver #{d_num} car_data cached",
+            end="\r",
+            flush=True,
+        )
     print()
     print(f"✅ Session {resolved_key} cache warm complete!\n")
 
@@ -349,11 +356,7 @@ def get_latest_race_session() -> Sessions:
     all_races = get_sessions(year=None, session_name="Race")
 
     # Filter for completed or active Grand Prix races in the past
-    valid_races = [
-        s
-        for s in all_races
-        if s.date_start and s.date_start <= now
-    ]
+    valid_races = [s for s in all_races if s.date_start and s.date_start <= now]
     if not valid_races:
         valid_races = all_races
 

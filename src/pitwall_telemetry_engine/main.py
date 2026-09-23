@@ -1,4 +1,5 @@
 import asyncio
+
 from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_car_data,
     get_drivers,
@@ -44,7 +45,7 @@ async def run_engine() -> None:
     )
 
     print("=" * 80)
-    print(f" 🏎️  PITWALL MULTI-DRIVER LIVE BATTLE STREAM (10x Speed)")
+    print(" 🏎️  PITWALL MULTI-DRIVER LIVE BATTLE STREAM (10x Speed)")
     print(f"     Circuit : {session.circuit_short_name} ({session.year})")
     print(f"     Battle  : {label_a}  ⚔️   {label_b}")
     print(f"     Start   : {session.date_start.strftime('%Y-%m-%d %H:%M:%S UTC')}")
@@ -78,7 +79,7 @@ async def run_engine() -> None:
     latest_intervals = {}
 
     # 5. Fetch FIA Race Control Track Flags & Messages
-    print(f"🏁 Fetching FIA Race Control messages & flag history...")
+    print("🏁 Fetching FIA Race Control messages & flag history...")
     rc_messages = sorted(get_race_control(session.session_key), key=lambda x: x.date)
     rc_cursor = 0
     update_race_status(flag="GREEN", message="TRACK CLEAR / RACING")

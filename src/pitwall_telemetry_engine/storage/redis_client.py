@@ -1,5 +1,7 @@
 import logging
+
 import redis.asyncio as aioredis
+
 from pitwall_telemetry_engine.schemas.car_data import CarData
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,9 @@ class RedisTelemetryBuffer:
             print(f"🗄️  Connected to Redis Stream Buffer at {self.redis_url}")
             return True
         except Exception as e:
-            print(f"⚠️  [REDIS NOTICE] Redis offline at {self.redis_url} ({e}). Engine running in standalone mode.")
+            print(
+                f"⚠️  [REDIS NOTICE] Redis offline at {self.redis_url} ({e}). Engine running in standalone mode."
+            )
             self.client = None
             return False
 
