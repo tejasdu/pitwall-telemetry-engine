@@ -269,7 +269,7 @@ def get_laps(
         cache_path = full_cache_path
 
     records = _fetch_or_cache(cache_path, url, schema_cls=Laps, indent=None)
-    return [Laps(**r) for r in records]
+    return [Laps(**r) for r in records] 
 
 
 def get_stints(

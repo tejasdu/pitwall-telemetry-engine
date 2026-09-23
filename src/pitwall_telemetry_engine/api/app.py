@@ -1,8 +1,10 @@
 from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+
 from pitwall_telemetry_engine.api.routes import router
 
 # Create the FastAPI app
@@ -31,6 +33,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 def root():
+    index_file = STATIC_DIR / "index.html"
+
+    if index_file.exists():
+        return FileResponse(index_file)
     return {
         "status": "online",
         "engine": "Pitwall v2 Telemetry Engine",
