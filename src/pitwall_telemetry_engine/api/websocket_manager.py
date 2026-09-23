@@ -1,36 +1,84 @@
+import asyncio
+
 from fastapi import WebSocket, WebSocketDisconnect
+
+from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer
+
+
+class ClientSession:
+    def __init__(self, websocket: WebSocket, session_key: str | int = 9472):
+        self.websocket = websocket
+        self.session_key = session_key
+        self.selected_drivers: list[int] = [1, 55]
+        self.replayer = TimelineReplayer(session_key, fps=30)
+        self.stream_task: asyncio.Task | None = None
+
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: list[WebSocket] = []
-        #Tracks the list of drivers the user is watching
-        self.selected_drivers: dict[WebSocket, list[int]] = {}
-    
-    async def connect(self, websocket: WebSocket):
+        self.sessions: dict[WebSocket, ClientSession] = {}
+
+    async def connect(self, websocket: WebSocket, session_key: str | int = 9472):
         await websocket.accept()
-        self.active_connections.append(websocket)
-    
-    async def broadcast_telemetry(self, message:dict):
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_json(message)
-            except Exception:
-                await self.disconnect(connection)
-    
-    def update_client_selection(self, websocket: WebSocket, driver_numbers: list[int]):
-        self.selected_drivers[websocket] = driver_numbers
-    
-    def get_active_driver_numbers(self) -> set[int]:
-        all_drivers = set()
-        for drivers in self.selected_drivers.values():
-            all_drivers.update(drivers)
-        
-        return all_drivers or {4, 55}
+
+        session = ClientSession(websocket, session_key)
+        self.sessions[websocket] = session
+
+        session.stream_task = asyncio.create_task(self._stream_to_client(session))
 
     async def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            
-        self.selected_drivers.pop(websocket, None)
+        session = self.sessions.pop(websocket, None)
+
+        if session and session.stream_task:
+            session.stream_task.cancel()
+
+    async def _stream_to_client(self, session: ClientSession):
+        try:
+            async for frame in session.replayer.stream_frames(
+                get_selected_drivers_cb=lambda: session.selected_drivers
+            ):
+                await session.websocket.send_json(frame)
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            print(f"Stream Error: {e}")
+
+    async def handle_client_message(self, websocket: WebSocket, data: dict):
+        session = self.sessions.get(websocket)
+        if not session:
+            return
+
+        # User makes an action on the front end
+        action = data.get("action")
+
+        if action == "play":
+            session.replayer.play()
+
+        elif action == "pause":
+            session.replayer.pause()
+
+        elif action == "toggle_play":
+            session.replayer.toggle_play()
+
+        elif action == "seek":
+            # Target timestamp in seconds
+            if "time" in data:
+                session.replayer.seek(float(data["time"]))
+
+        elif action == "seek_percent":
+            # Target percentage (0.0 to 1.0)
+            if "percent" in data:
+                session.replayer.seek_percent(float(data["percent"]))
+
+        elif action == "set_speed":
+            # Playback multiplier (e.g. 1.0, 2.0, 5.0)
+            if "speed" in data:
+                session.replayer.set_speed(float(data["speed"]))
+
+        elif action == "select_drivers":
+            # Drivers to show in cockpit drawer (e.g. [1, 55])
+            if "drivers" in data and isinstance(data["drivers"], list):
+                session.selected_drivers = [int(d) for d in data["drivers"]]
+
 
 manager = ConnectionManager()
