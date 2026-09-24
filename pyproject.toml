@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
-    "redis>=5.0.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "websockets>=12.0",
@@ -18,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pitwall-telemetry-engine = "pitwall_telemetry_engine.main:main"
+pitwall-telemetry-engine = "pitwall_telemetry_engine.api.app:start"
 pitwall-web = "pitwall_telemetry_engine.api.app:start"
 
 [build-system]

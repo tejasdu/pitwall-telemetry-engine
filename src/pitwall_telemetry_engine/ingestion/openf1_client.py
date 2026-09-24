@@ -218,15 +218,15 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     if sample_driver is not None:
         laps = get_laps(resolved_key, driver_number=sample_driver)
         valid_laps = [
-            l for l in laps
-            if l.lap_duration and l.lap_duration > 60 and not getattr(l, "is_pit_out_lap", False)
+            lap for lap in laps
+            if lap.lap_duration and lap.lap_duration > 60 and not getattr(lap, "is_pit_out_lap", False)
         ]
         if not valid_laps:
-            valid_laps = [l for l in laps if l.lap_duration and l.lap_duration > 60]
+            valid_laps = [lap for lap in laps if lap.lap_duration and lap.lap_duration > 60]
 
         if valid_laps:
             # Pick fastest clean lap
-            best_lap = min(valid_laps, key=lambda l: l.lap_duration)
+            best_lap = min(valid_laps, key=lambda lap: lap.lap_duration)
             if best_lap.date_start and best_lap.lap_duration:
                 start_dt = best_lap.date_start
                 end_dt = start_dt + timedelta(seconds=best_lap.lap_duration)

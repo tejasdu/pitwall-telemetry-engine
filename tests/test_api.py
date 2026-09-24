@@ -8,10 +8,8 @@ client = TestClient(app)
 
 
 def test_root_endpoint():
-    """Assert root endpoint returns 200 and expected payload."""
+    """Assert root endpoint returns 200 and serves the web cockpit HTML."""
     response = client.get("/")
     assert response.status_code == 200
-    payload = response.json()
-    assert payload.get("status") == "online"
-    assert "engine" in payload
-    assert payload.get("docs_url") == "/docs"
+    assert "text/html" in response.headers.get("content-type", "")
+    assert "Pitwall" in response.text or "PITWALL" in response.text
