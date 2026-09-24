@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -197,8 +197,9 @@ def get_location(
 
 def get_track_geometry(session_key: str | int = "latest", sample_driver: int | None = None) -> dict:
     """
-    Extracts and normalizes circuit track geometry points from location data of one driver.
-    Caches the pre-calculated geometry directly to avoid re-downsampling 50k points on each call.
+    Extracts clean circuit centerline geometry from a single flying lap of a driver,
+    applying Catmull-Rom spline interpolation to yield a smooth, closed racing track.
+    Caches the pre-calculated geometry directly on disk.
     """
     resolved_key = _resolve_session_key(session_key)
     cache_path = CACHE_DIR / str(resolved_key) / "track_geometry.json"
@@ -212,19 +213,70 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
         registry = get_drivers(resolved_key)
         sample_driver = next(iter(registry.keys())) if registry else None
 
-    # Fetch sample location points for a single driver
-    locs = get_location(resolved_key, driver_number=sample_driver)
-    valid_points = [p for p in locs if p.x != 0 or p.y != 0]
+    # 1. Fetch laps for this driver to find a single clean flying lap
+    lap_points: list[Location] = []
+    if sample_driver is not None:
+        laps = get_laps(resolved_key, driver_number=sample_driver)
+        valid_laps = [
+            l for l in laps
+            if l.lap_duration and l.lap_duration > 60 and not getattr(l, "is_pit_out_lap", False)
+        ]
+        if not valid_laps:
+            valid_laps = [l for l in laps if l.lap_duration and l.lap_duration > 60]
 
-    if not valid_points:
+        if valid_laps:
+            # Pick fastest clean lap
+            best_lap = min(valid_laps, key=lambda l: l.lap_duration)
+            if best_lap.date_start and best_lap.lap_duration:
+                start_dt = best_lap.date_start
+                end_dt = start_dt + timedelta(seconds=best_lap.lap_duration)
+                all_locs = get_location(resolved_key, driver_number=sample_driver)
+                lap_points = [
+                    p for p in all_locs
+                    if start_dt <= p.date <= end_dt and (p.x != 0 or p.y != 0)
+                ]
+
+    # Fallback if lap isolation yielded too few points
+    if len(lap_points) < 20:
+        all_locs = get_location(resolved_key, driver_number=sample_driver)
+        lap_points = [p for p in all_locs if p.x != 0 or p.y != 0][:400]
+
+    if not lap_points:
         return {"points": [], "bounds": {"min_x": 0, "max_x": 1, "min_y": 0, "max_y": 1}}
 
-    # Downsample points for smooth 60 FPS Canvas path rendering (~800 points is optimal)
-    step = max(1, len(valid_points) // 800)
-    sampled = valid_points[::step]
+    raw_pts = [{"x": float(p.x), "y": float(p.y)} for p in lap_points]
 
-    xs = [p.x for p in valid_points]
-    ys = [p.y for p in valid_points]
+    # 2. Catmull-Rom Spline Interpolation for smooth, high-fidelity curve
+    def _catmull_rom(p0: dict, p1: dict, p2: dict, p3: dict, t: float) -> dict:
+        t2 = t * t
+        t3 = t2 * t
+        x = 0.5 * (
+            (2 * p1["x"])
+            + (-p0["x"] + p2["x"]) * t
+            + (2 * p0["x"] - 5 * p1["x"] + 4 * p2["x"] - p3["x"]) * t2
+            + (-p0["x"] + 3 * p1["x"] - 3 * p2["x"] + p3["x"]) * t3
+        )
+        y = 0.5 * (
+            (2 * p1["y"])
+            + (-p0["y"] + p2["y"]) * t
+            + (2 * p0["y"] - 5 * p1["y"] + 4 * p2["y"] - p3["y"]) * t2
+            + (-p0["y"] + 3 * p1["y"] - 3 * p2["y"] + p3["y"]) * t3
+        )
+        return {"x": round(x, 1), "y": round(y, 1)}
+
+    n = len(raw_pts)
+    smoothed_pts = []
+    subdivisions = 2  # Subdivides each segment to create ~700 smooth points
+    for i in range(n):
+        p0 = raw_pts[(i - 1 + n) % n]
+        p1 = raw_pts[i]
+        p2 = raw_pts[(i + 1) % n]
+        p3 = raw_pts[(i + 2) % n]
+        for step in range(subdivisions):
+            smoothed_pts.append(_catmull_rom(p0, p1, p2, p3, step / subdivisions))
+
+    xs = [p["x"] for p in smoothed_pts]
+    ys = [p["y"] for p in smoothed_pts]
 
     bounds = {
         "min_x": float(min(xs)),
@@ -234,7 +286,7 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     }
 
     geometry = {
-        "points": [{"x": p.x, "y": p.y} for p in sampled],
+        "points": smoothed_pts,
         "bounds": bounds,
     }
 

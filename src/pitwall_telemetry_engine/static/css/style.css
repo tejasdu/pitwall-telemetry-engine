@@ -1,0 +1,473 @@
+/* --- 1. DESIGN TOKENS & THEME VARIABLES --- */
+:root {
+    /* Surfaces & Backgrounds */
+    --bg-root: #0B0E14;
+    --bg-surface: #121721;
+    --bg-panel: rgba(18, 23, 33, 0.80);
+    --bg-panel-elevated: rgba(26, 33, 46, 0.90);
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-focus: rgba(255, 255, 255, 0.20);
+
+    /* Text & Typography */
+    --text-primary: #F0F4F8;
+    --text-secondary: #94A3B8;
+    --text-muted: #64748B;
+    --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'Chakra Petch', 'JetBrains Mono', monospace;
+
+    /* Telemetry Channels & FIA Flags */
+    --color-throttle: #00E599;
+    --color-brake: #FF2A55;
+    --color-drs: #9B51E0;
+    --color-flag-green: #00E599;
+    --color-flag-yellow: #FFD000;
+    --color-flag-sc: #FF8000;
+    --color-flag-red: #FF2A55;
+    --color-flag-chequered: #FFFFFF;
+
+    /* Dynamic Driver & Team Accent (Overridden inline by OpenF1 payload) */
+    --driver-color: #FFFFFF;
+
+    /* Dimensions */
+    --header-height: 52px;
+    --playback-height: 56px;
+    --tower-width: 320px;
+}
+
+/* --- 2. GLOBAL RESET & BASE STYLES --- */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background-color: var(--bg-root);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Monospace alignment for timing and telemetry numbers to prevent jitter */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
+}
+
+/* --- 3. 3-TIER APPLICATION GRID LAYOUT --- */
+#app-container {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* Tier 1: Header / FIA Race Control HUD */
+#header-hud {
+    height: var(--header-height);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    z-index: 20;
+}
+
+#rc-dropdown-panel.collapsed {
+    display: none !important;
+}
+
+/* Tier 2: Main Stage (Timing Tower on Left, Map/Drawer on Right) */
+#main-stage {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Left Column: F1 Timing Tower */
+#timing-tower {
+    width: var(--tower-width);
+    height: 100%;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    z-index: 10;
+}
+
+/* Center Stage: Track Canvas Area */
+#track-container {
+    flex: 1;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(circle at center, #151B27 0%, var(--bg-root) 100%);
+}
+
+#track-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Tier 3: Bottom Playback Controls Bar */
+#playback-bar {
+    height: var(--playback-height);
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    z-index: 20;
+}
+
+/* --- 4. FLOATING COCKPIT TELEMETRY DRAWER --- */
+#cockpit-drawer {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(880px, 94%);
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+    z-index: 15;
+}
+
+#cockpit-drawer.collapsed {
+    transform: translateX(-50%) translateY(calc(100% - 36px));
+}
+
+#drawer-handle {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-subtle);
+    user-select: none;
+}
+
+#drawer-content {
+    display: flex;
+    padding: 16px;
+    gap: 20px;
+}
+
+/* Split Duel Cockpits */
+.cockpit-card {
+    flex: 1;
+    background: var(--bg-panel-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* --- 5. TELEMETRY WIDGETS & SHIFT LIGHTS --- */
+
+/* 15-LED Shift Light Bar */
+.shift-light-bar {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    height: 10px;
+}
+
+.shift-led {
+    flex: 1;
+    height: 100%;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.1);
+    transition: background-color 0.05s ease, box-shadow 0.05s ease;
+}
+
+.shift-led.green.active {
+    background: #00E599;
+    box-shadow: 0 0 8px #00E599;
+}
+
+.shift-led.red.active {
+    background: #FF2A55;
+    box-shadow: 0 0 8px #FF2A55;
+}
+
+.shift-led.blue.active {
+    background: #3B82F6;
+    box-shadow: 0 0 10px #3B82F6;
+    animation: flash 0.1s infinite alternate;
+}
+
+@keyframes flash {
+    0% {
+        opacity: 0.6;
+    }
+
+    100% {
+        opacity: 1.0;
+    }
+}
+
+/* Pedals Gauges (Throttle & Brake Bars) */
+.pedal-bar-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.pedal-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.pedal-fill {
+    height: 100%;
+    width: 0%;
+    transition: width 0.03s linear;
+}
+
+.pedal-fill.throttle {
+    background: var(--color-throttle);
+    box-shadow: 0 0 6px var(--color-throttle);
+}
+
+.pedal-fill.brake {
+    background: var(--color-brake);
+    box-shadow: 0 0 6px var(--color-brake);
+}
+
+/* Speedometer & Gear display */
+.telemetry-primary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.gear-badge {
+    font-size: 42px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.speed-metric {
+    font-size: 32px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.speed-unit {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
+/* --- 6. TIMING TOWER ROWS --- */
+.tower-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    user-select: none;
+}
+
+.tower-row:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tower-row.selected {
+    background: rgba(255, 255, 255, 0.08);
+    border-left: 3px solid var(--text-primary);
+}
+
+.pos-badge {
+    width: 24px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.team-pill {
+    width: 4px;
+    height: 16px;
+    border-radius: 2px;
+    margin-right: 8px;
+}
+
+.driver-tag {
+    font-weight: 700;
+    width: 44px;
+}
+
+.gap-delta {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+}
+
+/* Tire Compound Badges */
+.tire-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 10px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    margin-right: 8px;
+}
+
+.tire-badge.S {
+    background: #FF2A55;
+    color: #FFF;
+}
+
+/* Soft: Red */
+.tire-badge.M {
+    background: #FFD000;
+    color: #000;
+}
+
+/* Medium: Yellow */
+.tire-badge.H {
+    background: #FFFFFF;
+    color: #000;
+}
+
+/* Hard: White */
+.tire-badge.I {
+    background: #00E599;
+    color: #000;
+}
+
+/* Intermediate: Green */
+.tire-badge.W {
+    background: #0093CC;
+    color: #FFF;
+}
+
+/* Wet: Blue */
+
+/* Glowing Duel / Battle Indicator */
+.battle-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(155, 81, 224, 0.2);
+    color: #C084FC;
+    border: 1px solid rgba(155, 81, 224, 0.4);
+    animation: pulse-border 1s infinite alternate;
+}
+
+@keyframes pulse-border {
+    0% {
+        border-color: rgba(155, 81, 224, 0.4);
+    }
+
+    100% {
+        border-color: rgba(155, 81, 224, 1.0);
+        box-shadow: 0 0 8px rgba(155, 81, 224, 0.5);
+    }
+}
+
+/* --- 7. PLAYBACK CONTROLS --- */
+.play-btn {
+    background: var(--bg-panel-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.play-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--border-focus);
+}
+
+.scrubber-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.scrubber-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transition: transform 0.1s ease;
+}
+
+.scrubber-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.3);
+}
+
+.speed-selector {
+    display: flex;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.speed-opt {
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.speed-opt.active {
+    background: var(--bg-panel-elevated);
+    color: var(--text-primary);
+}
