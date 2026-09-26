@@ -4,6 +4,7 @@
  */
 
 import { initTrackMap } from './track_map.js';
+import { initTimingTower } from './timing_tower.js';
 
 export const state = {
     sessionKey: 9472,
@@ -165,6 +166,7 @@ function updateRaceControlList(messages) {
 
 function initApp() {
     initTrackMap();
+    initTimingTower();
     connectWebSocket();
 
     // Wire Race Control Dropdown Toggle

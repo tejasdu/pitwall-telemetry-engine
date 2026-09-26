@@ -197,9 +197,9 @@ def get_location(
 
 def get_track_geometry(session_key: str | int = "latest", sample_driver: int | None = None) -> dict:
     """
-    Extracts clean circuit centerline geometry from a single flying lap of a driver,
-    applying Catmull-Rom spline interpolation to yield a smooth, closed racing track.
-    Caches the pre-calculated geometry directly on disk.
+    Extracts clean circuit centerline geometry coordinates from a single GREEN flying lap of a driver,
+    applying Catmull-Rom spline interpolation to get a smooth, closed racing track.
+    Caches the pre-calculated geometry directly on disk. 
     """
     resolved_key = _resolve_session_key(session_key)
     cache_path = CACHE_DIR / str(resolved_key) / "track_geometry.json"

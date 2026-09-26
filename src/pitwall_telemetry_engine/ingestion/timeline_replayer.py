@@ -420,6 +420,7 @@ class TimelineReplayer:
             "positions": positions,
             "telemetry": telemetry,
             "battles": battles,
+            "intervals": {str(k): v for k, v in intervals_map.items()},
         }
 
     def step(self, dt: float | None = None, selected_drivers: list[int] | None = None) -> dict:

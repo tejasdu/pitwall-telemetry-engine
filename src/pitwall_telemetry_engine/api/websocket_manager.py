@@ -6,11 +6,16 @@ from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplaye
 
 
 class ClientSession:
-    def __init__(self, websocket: WebSocket, session_key: str | int = 9472):
+    def __init__(
+        self,
+        websocket: WebSocket,
+        replayer: TimelineReplayer,
+        session_key: str | int = 9472,
+    ):
         self.websocket = websocket
         self.session_key = session_key
         self.selected_drivers: list[int] = [1, 55]
-        self.replayer = TimelineReplayer(session_key, fps=30)
+        self.replayer = replayer
         self.stream_task: asyncio.Task | None = None
 
 
@@ -21,7 +26,10 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, session_key: str | int = 9472):
         await websocket.accept()
 
-        session = ClientSession(websocket, session_key)
+        key = int(session_key) if str(session_key).isdigit() else session_key
+        replayer = await asyncio.to_thread(TimelineReplayer, key, 30)
+
+        session = ClientSession(websocket, replayer, key)
         self.sessions[websocket] = session
 
         session.stream_task = asyncio.create_task(self._stream_to_client(session))
