@@ -290,9 +290,13 @@ function initApp() {
     const changeSessionBtn = document.getElementById('change-session-btn');
     if (changeSessionBtn) {
         changeSessionBtn.addEventListener('click', () => {
-            resetApp();
             const overlay = document.getElementById('mission-control-overlay');
             if (overlay) overlay.classList.remove('hidden');
+
+            const closeBtn = document.getElementById('mc-close-btn');
+            if (closeBtn && window.pitwallInitialized) {
+                closeBtn.style.display = 'block';
+            }
 
             const launchBtn = document.getElementById('mc-launch-btn');
             const yearSelect = document.getElementById('mc-year-select');
@@ -377,6 +381,13 @@ function initMissionControl() {
         return;
     }
 
+    const closeBtn = document.getElementById('mc-close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            overlay.classList.add('hidden');
+        });
+    }
+
     // Dynamically populate championship years up to current year
     const currentYear = new Date().getFullYear();
     yearSelect.innerHTML = '';
@@ -412,6 +423,8 @@ function initMissionControl() {
             initApp();
             window.pitwallInitialized = true;
         } else {
+            resetApp();
+
             // Hot-reload submodules without reloading the page
             const trackMap = await import('./track_map.js');
             trackMap.resetTrackMap();

@@ -183,7 +183,7 @@ body {
     overflow: hidden;
 }
 
-.cockpit-card > * {
+.cockpit-card>* {
     position: relative;
     z-index: 1;
 }
@@ -547,7 +547,10 @@ body {
 /* --- MISSION CONTROL OVERLAY --- */
 #mission-control-overlay {
     position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background: rgba(10, 10, 12, 0.85);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
@@ -570,7 +573,7 @@ body {
     border-radius: 12px;
     padding: 32px;
     width: 380px;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
     text-align: center;
     transform: translateY(0);
     transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -599,8 +602,11 @@ body {
     background: var(--bg-panel-elevated);
     border: 1px solid var(--border-subtle);
     color: var(--text-primary);
-    padding: 12px;
+    padding: 12px 40px 12px 12px;
     border-radius: 6px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
     font-family: var(--font-sans);
     font-size: 14px;
     font-weight: 600;
@@ -648,4 +654,23 @@ body {
     background: var(--bg-panel-elevated);
     color: var(--text-muted);
     cursor: not-allowed;
+}
+
+/* Custom Scrollbar Styles */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-body);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
 }
