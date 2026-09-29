@@ -7,9 +7,10 @@
 import { onFrame, sendAction, state } from './app.js';
 
 let towerContainer = null;
-let driverMetadata = new Map(); // driver_number -> { acronym, teamColor, fullName, compound }
+export const driverMetadata = new Map(); // driver_number -> { acronym, teamColor, fullName, lastName, teamName, compound }
 const rowElements = new Map();  // driver_number -> DOM element
 let initialLoaded = false;
+let gapMode = 'LEADER'; // 'LEADER', 'INTERVAL', 'LAP_TIME'
 
 // Tire compound map (e.g. "SOFT" -> "S", "MEDIUM" -> "M", "HARD" -> "H")
 function formatCompound(compoundName) {
@@ -54,15 +55,38 @@ async function loadMetadata() {
                 acronym: d.name_acronym || `#${dNum}`,
                 teamColor: d.team_colour ? `#${d.team_colour}` : '#FFFFFF',
                 fullName: d.full_name || d.name_acronym,
+                lastName: d.last_name || d.name_acronym,
                 teamName: d.team_name || 'Formula 1',
                 compound: stintsMap.get(dNum) || 'S',
+                headshotUrl: d.headshot_url || null,
             });
         }
 
         console.log(`[Pitwall] Timing tower metadata loaded for ${driverMetadata.size} drivers.`);
+
+        // If no drivers are selected, auto-select the first two to populate the cockpit HUD
+        if (state.selectedDrivers.length === 0 && driverMetadata.size > 0) {
+            const keys = Array.from(driverMetadata.keys());
+            if (keys.length > 0) state.selectedDrivers.push(keys[0]);
+            if (keys.length > 1) state.selectedDrivers.push(keys[1]);
+            sendAction({ action: 'select_drivers', drivers: state.selectedDrivers });
+        }
     } catch (err) {
         console.error('[Pitwall] Failed to load timing tower metadata:', err);
     }
+}
+
+export async function resetTimingTower() {
+    driverMetadata.clear();
+    rowElements.clear();
+    if (towerContainer) {
+        const rowsDiv = document.getElementById('tower-rows');
+        if (rowsDiv) {
+            rowsDiv.innerHTML = '<div style="padding: 12px; color: var(--text-muted); font-size: 11px;">Initializing uplink...</div>';
+        }
+    }
+    initialLoaded = false;
+    await loadMetadata();
 }
 
 /**
@@ -80,9 +104,16 @@ function getOrCreateRow(driverNumber, initialMeta) {
 
     row.innerHTML = `
         <span class="pos-badge" data-slot="pos">--</span>
+        <span class="pos-change" data-slot="change"></span>
         <span class="team-pill" data-slot="pill" style="background: ${color};"></span>
-        <span class="driver-tag" data-slot="tag">${initialMeta.acronym || '#' + driverNumber}</span>
-        <span class="tire-badge ${initialMeta.compound || 'S'}" data-slot="tire">${initialMeta.compound || 'S'}</span>
+        <div class="driver-identity">
+            <div class="driver-name" data-slot="name">${initialMeta.lastName ? initialMeta.lastName.toUpperCase() : initialMeta.acronym || '#' + driverNumber}</div>
+            <div class="team-name" data-slot="team">${initialMeta.teamName || ''}</div>
+        </div>
+        <div class="tire-container">
+            <span class="tire-badge ${initialMeta.compound || 'S'}" data-slot="tire">${initialMeta.compound || 'S'}</span>
+            <span class="pit-count" data-slot="pit-count"></span>
+        </div>
         <span class="gap-delta" data-slot="gap">--</span>
         <span class="battle-indicator" data-slot="battle" style="display: none; margin-left: 6px; font-size: 11px; cursor: pointer;" title="Active Battle &bull; Click to Compare">⚔️</span>
     `;
@@ -197,17 +228,24 @@ function handleTowerFrame(frame) {
         const intData = intervals[String(dNum)] || intervals[dNum] || {};
         const gapVal = intData.gap_to_leader !== undefined ? intData.gap_to_leader : null;
         const intervalVal = intData.interval !== undefined ? intData.interval : null;
+        const positionVal = intData.position !== undefined ? intData.position : 999;
 
         standings.push({
             driverNumber: dNum,
             meta,
+            position: positionVal,
             gapToLeader: (typeof gapVal === 'number') ? gapVal : 999.0,
             interval: (typeof intervalVal === 'number') ? intervalVal : null,
+            inPit: intData.in_pit === true,
+            isDnf: intData.is_dnf === true,
+            pitCount: intData.pit_count || 0,
+            lastLapTime: intData.last_lap_time || null,
+            posChange: intData.pos_change || 0,
         });
     }
 
-    // Sort by gap_to_leader ascending (P1 has gap = 0.0, P2 has gap = 1.2, etc.)
-    standings.sort((a, b) => a.gapToLeader - b.gapToLeader);
+    // Sort by official position ascending
+    standings.sort((a, b) => a.position - b.position);
 
     // Build quick lookup for active battles keyed by attacker
     const battleMap = new Map();
@@ -226,13 +264,13 @@ function handleTowerFrame(frame) {
 
     for (let i = 0; i < standings.length; i++) {
         const item = standings[i];
-        const pos = i + 1;
         const row = getOrCreateRow(item.driverNumber, item.meta);
 
         // Slot 1: Position
         const posEl = row.querySelector('[data-slot="pos"]');
-        if (posEl && posEl.textContent !== String(pos)) {
-            posEl.textContent = pos;
+        const posDisplay = item.position !== 999 ? String(item.position) : '--';
+        if (posEl && posEl.textContent !== posDisplay) {
+            posEl.textContent = posDisplay;
         }
 
         // Slot 2: Team Pill Color
@@ -241,19 +279,66 @@ function handleTowerFrame(frame) {
             pillEl.style.background = item.meta.teamColor;
         }
 
-        // Slot 3: Gap / Interval Text
+        // Pos Change
+        const changeEl = row.querySelector('[data-slot="change"]');
+        if (changeEl) {
+            if (item.posChange > 0) {
+                changeEl.textContent = `▲ ${item.posChange}`;
+                changeEl.className = 'pos-change up';
+            } else if (item.posChange < 0) {
+                changeEl.textContent = `▼ ${Math.abs(item.posChange)}`;
+                changeEl.className = 'pos-change down';
+            } else {
+                changeEl.textContent = '-';
+                changeEl.className = 'pos-change neutral';
+            }
+        }
+
+        // Pit Count
+        const pitCountEl = row.querySelector('[data-slot="pit-count"]');
+        if (pitCountEl) {
+            if (item.pitCount > 0) {
+                pitCountEl.innerHTML = `
+                    <div style="display:flex; flex-direction:column; align-items:center; line-height: 1; margin-left: 2px;">
+                        <span style="font-size: 6px; color: var(--text-muted); font-weight: 800; letter-spacing: 0.5px;">STOPS</span>
+                        <span style="font-size: 10px; font-weight: 700; color: var(--text-primary);">${item.pitCount}</span>
+                    </div>
+                `;
+            } else {
+                pitCountEl.innerHTML = '';
+            }
+        }
+
+        // Slot 3: Gap / Interval / Lap Time
         const gapEl = row.querySelector('[data-slot="gap"]');
         if (gapEl) {
-            if (pos === 1) {
-                gapEl.textContent = 'LEADER';
-                gapEl.style.color = 'var(--text-muted)';
-            } else if (item.gapToLeader < 900) {
-                // Show gap to leader, e.g. "+1.428s"
-                gapEl.textContent = `+${item.gapToLeader.toFixed(3)}s`;
-                gapEl.style.color = 'var(--text-secondary)';
+            if (item.isDnf) {
+                gapEl.innerHTML = '<span class="badge-dnf" style="color: #F87171; font-weight: bold; background: rgba(248, 113, 113, 0.15); padding: 2px 4px; border-radius: 4px;">DNF</span>';
+                row.style.opacity = '0.5';
             } else {
-                gapEl.textContent = '--';
-                gapEl.style.color = 'var(--text-muted)';
+                row.style.opacity = '1.0';
+
+                if (item.inPit) {
+                    gapEl.innerHTML = '<span class="badge-pit" style="color: #FBBF24; font-weight: bold; background: rgba(251, 191, 36, 0.15); padding: 2px 4px; border-radius: 4px;">PIT</span>';
+                } else if (item.position === 1) {
+                    if (gapMode === 'LAP_TIME' && item.lastLapTime) {
+                        gapEl.textContent = formatLapTime(item.lastLapTime);
+                    } else {
+                        gapEl.textContent = 'LEADER';
+                    }
+                    gapEl.style.color = 'var(--text-muted)';
+                } else {
+                    if (gapMode === 'LEADER') {
+                        gapEl.textContent = item.gapToLeader < 900 ? `+${item.gapToLeader.toFixed(3)}s` : '--';
+                        gapEl.style.color = 'var(--text-secondary)';
+                    } else if (gapMode === 'INTERVAL') {
+                        gapEl.textContent = item.interval !== null ? `+${item.interval.toFixed(3)}s` : '--';
+                        gapEl.style.color = 'var(--text-secondary)';
+                    } else if (gapMode === 'LAP_TIME') {
+                        gapEl.textContent = item.lastLapTime ? formatLapTime(item.lastLapTime) : '--';
+                        gapEl.style.color = 'var(--text-secondary)';
+                    }
+                }
             }
         }
 
@@ -280,6 +365,16 @@ function handleTowerFrame(frame) {
 }
 
 /**
+ * Formats a raw seconds float into a standard M:SS.mmm string
+ */
+function formatLapTime(seconds) {
+    if (!seconds) return '--';
+    const m = Math.floor(seconds / 60);
+    const s = (seconds % 60).toFixed(3);
+    return `${m}:${s.padStart(6, '0')}`;
+}
+
+/**
  * Initializes the Timing Tower module.
  */
 export async function initTimingTower() {
@@ -288,6 +383,23 @@ export async function initTimingTower() {
 
     await loadMetadata();
     updateDuelLabel();
+
+    // Setup interactive Gap Header toggle
+    const gapBtn = document.getElementById('gap-mode-toggle');
+    if (gapBtn) {
+        gapBtn.addEventListener('click', () => {
+            if (gapMode === 'LEADER') {
+                gapMode = 'INTERVAL';
+                gapBtn.textContent = 'INTERVAL TO CAR AHEAD';
+            } else if (gapMode === 'INTERVAL') {
+                gapMode = 'LAP_TIME';
+                gapBtn.textContent = 'LAST LAP TIME';
+            } else {
+                gapMode = 'LEADER';
+                gapBtn.textContent = 'GAP TO LEADER';
+            }
+        });
+    }
 
     // Register 30 FPS frame callback
     onFrame(handleTowerFrame);

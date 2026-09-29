@@ -179,6 +179,13 @@ body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    position: relative;
+    overflow: hidden;
+}
+
+.cockpit-card > * {
+    position: relative;
+    z-index: 1;
 }
 
 /* --- 5. TELEMETRY WIDGETS & SHIFT LIGHTS --- */
@@ -321,9 +328,64 @@ body {
     margin-right: 8px;
 }
 
-.driver-tag {
+.driver-identity {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.1;
+    width: 90px;
+    margin-right: auto;
+}
+
+.driver-name {
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.team-name {
+    font-weight: 500;
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pos-change {
+    font-size: 10px;
+    font-weight: 800;
+    width: 24px;
+    text-align: right;
+    margin-right: 8px;
+}
+
+.pos-change.up {
+    color: #00E599;
+}
+
+.pos-change.down {
+    color: #FF2A55;
+}
+
+.pos-change.neutral {
+    color: var(--text-muted);
+}
+
+.tire-container {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 12px;
+}
+
+.pit-count {
+    font-size: 10px;
     font-weight: 700;
-    width: 44px;
+    color: var(--text-muted);
 }
 
 .gap-delta {
@@ -470,4 +532,120 @@ body {
 .speed-opt.active {
     background: var(--bg-panel-elevated);
     color: var(--text-primary);
+}
+
+.cockpit-headshot {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    display: none;
+}
+
+/* --- MISSION CONTROL OVERLAY --- */
+#mission-control-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10, 10, 12, 0.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+#mission-control-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.mission-control-modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 32px;
+    width: 380px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    text-align: center;
+    transform: translateY(0);
+    transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+#mission-control-overlay.hidden .mission-control-modal {
+    transform: translateY(-20px);
+}
+
+.mc-form-group {
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.mc-form-group label {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+}
+
+.mc-select {
+    width: 100%;
+    background: var(--bg-panel-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    padding: 12px;
+    border-radius: 6px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 600;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+}
+
+.mc-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.mc-select:focus {
+    border-color: #FF2A55;
+    box-shadow: 0 0 0 2px rgba(255, 42, 85, 0.2);
+}
+
+.mc-launch-btn {
+    width: 100%;
+    padding: 14px;
+    background: #FF2A55;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    cursor: pointer;
+    margin-top: 12px;
+    transition: all 0.2s ease;
+}
+
+.mc-launch-btn:hover:not(:disabled) {
+    background: #ff476e;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 42, 85, 0.3);
+}
+
+.mc-launch-btn:disabled {
+    background: var(--bg-panel-elevated);
+    color: var(--text-muted);
+    cursor: not-allowed;
 }

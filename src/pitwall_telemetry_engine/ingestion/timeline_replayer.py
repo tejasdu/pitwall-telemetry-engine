@@ -8,6 +8,9 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_drivers,
     get_intervals,
     get_location,
+    get_laps,
+    get_pit,
+    get_position,
     get_race_control,
     get_session,
 )
@@ -133,12 +136,35 @@ class TimelineReplayer:
                 session_start_time=self.start_time,
             )
 
-        # 5. Load and index macro intervals & race control events
+        # 5. Load and index macro intervals, positions & race control events
         self.intervals = sorted(get_intervals(session_key), key=lambda i: i.date)
         self.interval_times = [i.date.timestamp() for i in self.intervals]
 
+        self.positions = sorted(get_position(session_key), key=lambda p: p.date)
+        self.position_times = [p.date.timestamp() for p in self.positions]
+
         self.race_control = sorted(get_race_control(session_key), key=lambda m: m.date)
         self.rc_times = [m.date.timestamp() for m in self.race_control]
+
+        self.pits_by_driver = {}
+        for p in get_pit(session_key):
+            if p.driver_number not in self.pits_by_driver:
+                self.pits_by_driver[p.driver_number] = []
+            self.pits_by_driver[p.driver_number].append(p)
+
+        self.laps_by_driver = {}
+        for lap in get_laps(session_key):
+            if lap.driver_number not in self.laps_by_driver:
+                self.laps_by_driver[lap.driver_number] = []
+            if lap.lap_duration and lap.date_start:
+                self.laps_by_driver[lap.driver_number].append(lap)
+        for d in self.laps_by_driver:
+            self.laps_by_driver[d].sort(key=lambda x: x.date_start)
+
+        self.starting_positions = {}
+        for p in sorted(get_position(session_key), key=lambda x: x.date):
+            if p.driver_number not in self.starting_positions:
+                self.starting_positions[p.driver_number] = p.position
 
         # Cache previous ticks per driver to compute deceleration gradients
         self._prev_ticks: dict[int, CarData] = {}
@@ -289,26 +315,37 @@ class TimelineReplayer:
         return self.get_race_control_state()["flag"]
 
     def get_latest_intervals(self) -> dict[int, dict]:
-        """Returns the latest gap and interval for each driver at t_sim."""
-        if not self.interval_times:
-            return {}
-
-        idx = bisect_right(self.interval_times, self.t_sim) - 1
-        if idx < 0:
-            return {}
-
-        # Look back up to 200 records to populate the current 20-car standings
+        """Returns the latest position, gap, and interval for each driver at t_sim."""
         latest_by_driver: dict[int, dict] = {}
-        start_search = max(0, idx - 300)
-        for i in range(idx, start_search - 1, -1):
-            rec = self.intervals[i]
-            if rec.driver_number not in latest_by_driver:
-                latest_by_driver[rec.driver_number] = {
-                    "interval": rec.interval,
-                    "gap_to_leader": rec.gap_to_leader,
-                }
-            if len(latest_by_driver) >= len(self.drivers):
-                break
+        
+        # 1. Fetch latest official positions
+        if self.position_times:
+            idx = bisect_right(self.position_times, self.t_sim) - 1
+            if idx >= 0:
+                start_search = max(0, idx - 1000)
+                for i in range(idx, start_search - 1, -1):
+                    rec = self.positions[i]
+                    if rec.driver_number not in latest_by_driver:
+                        latest_by_driver[rec.driver_number] = {"position": rec.position}
+                    if len(latest_by_driver) >= len(self.drivers):
+                        break
+
+        # 2. Fetch latest intervals and gaps
+        if self.interval_times:
+            idx = bisect_right(self.interval_times, self.t_sim) - 1
+            if idx >= 0:
+                start_search = max(0, idx - 1000)
+                drivers_found = set()
+                for i in range(idx, start_search - 1, -1):
+                    rec = self.intervals[i]
+                    if rec.driver_number not in drivers_found:
+                        drivers_found.add(rec.driver_number)
+                        if rec.driver_number not in latest_by_driver:
+                            latest_by_driver[rec.driver_number] = {}
+                        latest_by_driver[rec.driver_number]["interval"] = rec.interval
+                        latest_by_driver[rec.driver_number]["gap_to_leader"] = rec.gap_to_leader
+                    if len(drivers_found) >= len(self.drivers):
+                        break
 
         return latest_by_driver
 
@@ -395,9 +432,51 @@ class TimelineReplayer:
         rc_state = self.get_race_control_state()
         flag = rc_state["flag"]
 
-        # 4. Gaps and active battles
+        # 4. Gaps, battles, and status flags (PIT / DNF)
         intervals_map = self.get_latest_intervals()
         battles = self.detect_battles(flag, intervals_map)
+        
+        for d_num in self.drivers.keys():
+            if d_num not in intervals_map:
+                intervals_map[d_num] = {}
+            
+            in_pit = False
+            pits = self.pits_by_driver.get(d_num, [])
+            pit_count = 0
+            for p in pits:
+                if p.date.timestamp() <= self.t_sim:
+                    pit_count += 1
+                if p.pit_duration:
+                    end_time = p.date.timestamp() + p.pit_duration
+                    if p.date.timestamp() <= self.t_sim <= end_time:
+                        in_pit = True
+            
+            is_dnf = False
+            tl = self.timelines.get(d_num)
+            if not in_pit and flag not in ("RED", "SC", "CHEQUERED"):
+                if tl:
+                    last_tel = tl.tel_times[-1] if tl.tel_times else 0
+                    last_loc = tl.loc_times[-1] if tl.loc_times else 0
+                    last_update = max(last_tel, last_loc)
+                    if last_update > 0 and self.t_sim - last_update > 120:
+                        is_dnf = True
+
+            last_lap = None
+            for lap in self.laps_by_driver.get(d_num, []):
+                if lap.date_start.timestamp() + lap.lap_duration <= self.t_sim:
+                    last_lap = lap.lap_duration
+                else:
+                    break
+
+            curr_pos = intervals_map[d_num].get("position", 0)
+            start_pos = self.starting_positions.get(d_num, curr_pos)
+            pos_change = start_pos - curr_pos if curr_pos > 0 else 0
+
+            intervals_map[d_num]["in_pit"] = in_pit
+            intervals_map[d_num]["is_dnf"] = is_dnf
+            intervals_map[d_num]["pit_count"] = pit_count
+            intervals_map[d_num]["last_lap_time"] = last_lap
+            intervals_map[d_num]["pos_change"] = pos_change
 
         # 5. Progress calculation
         total_duration = max(1.0, self.end_time - self.start_time)
@@ -435,13 +514,18 @@ class TimelineReplayer:
         self.is_playing = True
         frame_dt = self.frame_interval
 
-        while self.is_playing and self.t_sim < self.end_time:
+        while self.t_sim < self.end_time:
             loop_start = time.perf_counter()
 
             selected = get_selected_drivers_cb() if callable(get_selected_drivers_cb) else None
 
-            # Advance clock and emit frame
-            frame = self.step(selected_drivers=selected)
+            if self.is_playing:
+                # Advance clock and emit frame
+                frame = self.step(selected_drivers=selected)
+            else:
+                # Keep stream alive but do not advance clock
+                frame = self.assemble_frame(selected_drivers=selected)
+                
             yield frame
 
             # Drift compensation: sleep only the remaining time in this frame window

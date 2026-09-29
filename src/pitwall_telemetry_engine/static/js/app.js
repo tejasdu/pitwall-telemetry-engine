@@ -5,14 +5,33 @@
 
 import { initTrackMap } from './track_map.js';
 import { initTimingTower } from './timing_tower.js';
+import { initCockpit } from './cockpit.js';
 
 export const state = {
-    sessionKey: 9472,
-    selectedDrivers: [1, 55],
+    sessionKey: null,
+    selectedDrivers: [],
     isPlaying: false,
     playbackSpeed: 1.0,
     latestFrame: null,
 };
+
+let isIntentionalDisconnect = false;
+
+export function resetApp() {
+    isIntentionalDisconnect = true;
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    if (ws) {
+        ws.close();
+        ws = null;
+    }
+    state.latestFrame = null;
+    state.selectedDrivers = [];
+    state.isPlaying = false;
+    document.getElementById('session-title').innerText = 'AWAITING SESSION LINK...';
+}
 
 let ws = null;
 let reconnectTimer = null;
@@ -37,6 +56,7 @@ export function sendAction(data) {
 
 // Connects to the FastAPI WebSocket streaming endpoint.
 function connectWebSocket() {
+    isIntentionalDisconnect = false;
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -48,11 +68,18 @@ function connectWebSocket() {
     console.log(`[Pitwall] Connecting to live telemetry: ${wsUrl}`);
     ws = new WebSocket(wsUrl);
 
-    ws.onopen = () => {
+    ws.onopen = async () => {
         console.log('[Pitwall] Telemetry WebSocket connected.');
         updateTicker('TELEMETRY STREAM CONNECTED &bull; LIVE FEED ACTIVE');
-        // Sync initial driver selection
-        sendAction({ action: 'select_drivers', drivers: state.selectedDrivers });
+
+        // Hide the overlay only after connection is successful
+        const overlay = document.getElementById('mission-control-overlay');
+        if (overlay) overlay.classList.add('hidden');
+
+        // Sync initial driver selection if already populated
+        if (state.selectedDrivers.length > 0) {
+            sendAction({ action: 'select_drivers', drivers: state.selectedDrivers });
+        }
     };
 
     ws.onmessage = (event) => {
@@ -75,6 +102,10 @@ function connectWebSocket() {
     };
 
     ws.onclose = () => {
+        if (isIntentionalDisconnect) {
+            console.log('[Pitwall] WebSocket closed intentionally by user.');
+            return;
+        }
         console.warn('[Pitwall] WebSocket closed. Reconnecting in 2 seconds...');
         updateTicker('STREAM DISCONNECTED &bull; RECONNECTING...');
         reconnectTimer = setTimeout(connectWebSocket, 2000);
@@ -164,9 +195,65 @@ function updateRaceControlList(messages) {
     }).join('');
 }
 
+function initPlaybackControls() {
+    const playBtn = document.getElementById('play-pause-btn');
+    const playIcon = document.getElementById('play-icon');
+    const scrubber = document.getElementById('scrubber');
+    const scrubberPct = document.getElementById('scrubber-pct');
+    const speedOpts = document.querySelectorAll('.speed-opt');
+
+    if (playBtn) {
+        playBtn.addEventListener('click', () => {
+            sendAction({ action: 'toggle_play' });
+        });
+    }
+
+    if (scrubber) {
+        scrubber.addEventListener('input', (e) => {
+            if (scrubberPct) scrubberPct.textContent = parseFloat(e.target.value).toFixed(1) + '%';
+        });
+        scrubber.addEventListener('change', (e) => {
+            sendAction({ action: 'seek_percent', percent: parseFloat(e.target.value) / 100.0 });
+        });
+    }
+
+    speedOpts.forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            sendAction({ action: 'set_speed', speed: parseFloat(e.target.dataset.speed) });
+        });
+    });
+
+    onFrame((frame) => {
+        if (playIcon) {
+            if (frame.is_playing) {
+                playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>';
+            } else {
+                playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+            }
+        }
+        if (scrubber && frame.progress_pct !== undefined) {
+            // Only update scrubber value if the user isn't actively dragging it
+            if (document.activeElement !== scrubber) {
+                scrubber.value = frame.progress_pct;
+                if (scrubberPct) scrubberPct.textContent = frame.progress_pct.toFixed(1) + '%';
+            }
+        }
+
+        speedOpts.forEach(opt => {
+            if (parseFloat(opt.dataset.speed) === frame.playback_speed) {
+                opt.classList.add('active');
+            } else {
+                opt.classList.remove('active');
+            }
+        });
+    });
+}
+
 function initApp() {
     initTrackMap();
     initTimingTower();
+    initCockpit();
+    initPlaybackControls();
     connectWebSocket();
 
     // Wire Race Control Dropdown Toggle
@@ -198,10 +285,148 @@ function initApp() {
             }
         });
     }
+
+    // Wire Change Session Button
+    const changeSessionBtn = document.getElementById('change-session-btn');
+    if (changeSessionBtn) {
+        changeSessionBtn.addEventListener('click', () => {
+            resetApp();
+            const overlay = document.getElementById('mission-control-overlay');
+            if (overlay) overlay.classList.remove('hidden');
+
+            const launchBtn = document.getElementById('mc-launch-btn');
+            const yearSelect = document.getElementById('mc-year-select');
+            const sessionSelect = document.getElementById('mc-session-select');
+            if (launchBtn) {
+                launchBtn.innerHTML = 'LAUNCH ENGINE';
+                launchBtn.disabled = false;
+            }
+            if (yearSelect) yearSelect.disabled = false;
+            if (sessionSelect) sessionSelect.disabled = false;
+        });
+    }
+}
+
+async function loadSessionsForYear(year) {
+    const sessionSelect = document.getElementById('mc-session-select');
+    const launchBtn = document.getElementById('mc-launch-btn');
+
+    sessionSelect.disabled = true;
+    sessionSelect.innerHTML = '<option>Fetching sessions...</option>';
+    launchBtn.disabled = true;
+
+    try {
+        const response = await fetch(`/api/sessions?year=${year}`);
+        let sessions = await response.json();
+
+        // Filter out future races that haven't happened yet
+        const now = new Date();
+        sessions = sessions.filter(s => new Date(s.date_start) <= now);
+
+        // Explicitly filter out cancelled 2026 Saudi Arabia & Bahrain GP from OpenF1 dataset (including the Kuala Lumpur data anomaly)
+        sessions = sessions.filter(s => {
+            if (s.year === 2026 && (s.country_name === 'Saudi Arabia' || s.country_name === 'Bahrain')) {
+                return false;
+            }
+            return true;
+        });
+
+        // Sort officially by FIA meeting_key rather than date_start to handle rescheduled races perfectly
+        sessions.sort((a, b) => a.meeting_key - b.meeting_key);
+
+        sessionSelect.innerHTML = '';
+        if (sessions.length === 0) {
+            sessionSelect.innerHTML = '<option>No past sessions found for this year</option>';
+            return;
+        }
+
+        sessions.forEach((s, index) => {
+            const opt = document.createElement('option');
+            opt.value = s.session_key;
+
+            // Format time dynamically to the user's local timezone
+            const localDate = new Date(s.date_start);
+            const timeStr = localDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+
+            // Use country_name + circuit_short_name to prevent "United States" or "Spain" duplicates
+            opt.textContent = `Round ${index + 1} - ${s.country_name} GP (${s.circuit_short_name}) - ${timeStr}`;
+            sessionSelect.appendChild(opt);
+        });
+
+        // Automatically pre-select the most recent race (bottom of the chronological list)
+        sessionSelect.selectedIndex = sessions.length - 1;
+
+        sessionSelect.disabled = false;
+        launchBtn.disabled = false;
+    } catch (err) {
+        console.error('Failed to load sessions', err);
+        sessionSelect.innerHTML = '<option>API Error - Please retry</option>';
+    }
+}
+
+function initMissionControl() {
+    const yearSelect = document.getElementById('mc-year-select');
+    const sessionSelect = document.getElementById('mc-session-select');
+    const launchBtn = document.getElementById('mc-launch-btn');
+    const overlay = document.getElementById('mission-control-overlay');
+
+    if (!overlay) {
+        // If the DOM doesn't have the overlay, just fallback to 9472 and init
+        state.sessionKey = 9472;
+        initApp();
+        return;
+    }
+
+    // Dynamically populate championship years up to current year
+    const currentYear = new Date().getFullYear();
+    yearSelect.innerHTML = '';
+    for (let y = currentYear; y >= 2023; y--) {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y;
+        yearSelect.appendChild(opt);
+    }
+
+    // Initial load for default year
+    loadSessionsForYear(yearSelect.value);
+
+    // On year change
+    yearSelect.addEventListener('change', (e) => {
+        loadSessionsForYear(e.target.value);
+    });
+
+    // On Launch
+    launchBtn.addEventListener('click', async () => {
+        state.sessionKey = sessionSelect.value;
+        const selectedOpt = sessionSelect.options[sessionSelect.selectedIndex];
+
+        // Update header title dynamically
+        document.getElementById('session-title').innerText = selectedOpt.textContent.toUpperCase();
+
+        launchBtn.innerHTML = 'SYNCING TELEMETRY (THIS MAY TAKE 15 SECONDS)...';
+        launchBtn.disabled = true;
+        yearSelect.disabled = true;
+        sessionSelect.disabled = true;
+
+        if (!window.pitwallInitialized) {
+            initApp();
+            window.pitwallInitialized = true;
+        } else {
+            // Hot-reload submodules without reloading the page
+            const trackMap = await import('./track_map.js');
+            trackMap.resetTrackMap();
+
+            const timingTower = await import('./timing_tower.js');
+            // Do not await this, it blocks the UI if OpenF1 API is slow!
+            timingTower.resetTimingTower();
+
+            connectWebSocket();
+        }
+    });
 }
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
+    document.addEventListener('DOMContentLoaded', initMissionControl);
 } else {
-    initApp();
+    initMissionControl();
 }

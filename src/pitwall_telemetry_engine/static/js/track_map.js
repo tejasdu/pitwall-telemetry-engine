@@ -13,6 +13,8 @@ let ctx = null;
 let trackPoints = [];
 let bounds = { minX: 0, maxX: 1, minY: 0, maxY: 1, scale: 1, offsetX: 0, offsetY: 0 };
 let cachedTrackPath = null;
+let cachedSectorPaths = [null, null, null, null]; // Index 1, 2, 3
+let sectorBoundaries = []; // {x, y, label}
 
 // driver_number : { currentX, currentY, targetX, targetY, acronym, color }
 const driverPositions = new Map();
@@ -57,13 +59,51 @@ function updateBounds() {
 
   // Pre-build and cache the Path2D spline once so renderLoop doesn't loop 300 times at 60 FPS
   cachedTrackPath = new Path2D();
+  cachedSectorPaths = [null, new Path2D(), new Path2D(), new Path2D()];
+
+  const s1End = Math.floor(trackPoints.length * (bounds.s1_ratio || 0.333));
+  const s2End = Math.floor(trackPoints.length * (bounds.s2_ratio || 0.666));
+
   for (let i = 0; i < trackPoints.length; i++) {
     const cx = toCanvasX(trackPoints[i].x);
     const cy = toCanvasY(trackPoints[i].y);
+
+    // Main track path
     if (i === 0) cachedTrackPath.moveTo(cx, cy);
     else cachedTrackPath.lineTo(cx, cy);
+
+    // Sector paths
+    let sector = 1;
+    if (i >= s1End && i < s2End) sector = 2;
+    if (i >= s2End) sector = 3;
+
+    // If it's the first point of the sector, or index 0, moveTo
+    // But to ensure continuous lines, we should also moveTo the previous point if it's the very first point of sector 2 or 3.
+    if (i === 0 || i === s1End || i === s2End) {
+      if (i > 0) {
+        const prevX = toCanvasX(trackPoints[i - 1].x);
+        const prevY = toCanvasY(trackPoints[i - 1].y);
+        cachedSectorPaths[sector].moveTo(prevX, prevY);
+      } else {
+        cachedSectorPaths[sector].moveTo(cx, cy);
+      }
+    }
+    cachedSectorPaths[sector].lineTo(cx, cy);
   }
   cachedTrackPath.closePath();
+
+  // Cache boundary points for rendering dots
+  sectorBoundaries = [];
+  const bIndices = [0, s1End, s2End];
+  for (const idx of bIndices) {
+    if (idx >= 0 && idx < trackPoints.length) {
+      sectorBoundaries.push({
+        x: trackPoints[idx].x,
+        y: trackPoints[idx].y,
+        label: idx === 0 ? 'START' : (idx === s1End ? 'S2' : 'S3')
+      });
+    }
+  }
 }
 
 // Helper: Fetches circuit geometry once from backend REST API
@@ -89,6 +129,8 @@ async function loadTrackGeometry() {
       bounds.maxX = maxX;
       bounds.minY = minY;
       bounds.maxY = maxY;
+      bounds.s1_ratio = data.s1_ratio;
+      bounds.s2_ratio = data.s2_ratio;
 
       updateBounds();
       console.log(`[Pitwall] Circuit geometry loaded: ${points.length} points.`);
@@ -161,6 +203,46 @@ function renderLoop() {
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.stroke(cachedTrackPath);
+
+      // Layer 4.5: Sector Boundary Markers
+      for (const b of sectorBoundaries) {
+        const bx = toCanvasX(b.x);
+        const by = toCanvasY(b.y);
+
+        ctx.beginPath();
+        ctx.arc(bx, by, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#141C28';
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.font = '600 10px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(b.label, bx, by - 10);
+      }
+
+      // Layer 5: Active Sector Hazards
+      if (activeCautionSectors && activeCautionSectors.length > 0) {
+        ctx.lineWidth = 14; // Slightly thicker than asphalt, inside the outer bed
+        ctx.strokeStyle = 'rgba(255, 208, 0, 0.6)';
+
+        // Debugging log for the user to check in their browser console
+        if (Math.random() < 0.05) {
+          console.log(`[Pitwall] Active Hazard on Sectors:`, activeCautionSectors);
+        }
+
+        // Make it blink based on time
+        const blink = Math.floor(Date.now() / 500) % 2 === 0;
+        if (blink) {
+          for (const sectorNum of activeCautionSectors) {
+            if (sectorNum >= 1 && sectorNum <= 3 && cachedSectorPaths[sectorNum]) {
+              ctx.stroke(cachedSectorPaths[sectorNum]);
+            }
+          }
+        }
+      }
     }
 
     // 2. Draw Battle Tethers (glowing brackets between dueling cars)
@@ -247,5 +329,15 @@ export function initTrackMap() {
 
   // Start 60-120 FPS animation loop
   requestAnimationFrame(renderLoop);
+}
+
+export function resetTrackMap() {
+  driverPositions.clear();
+  trackPoints = [];
+  cachedTrackPath = null;
+  activeBattles = [];
+  activeCautionSectors = [];
+  if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  loadTrackGeometry();
 }
 

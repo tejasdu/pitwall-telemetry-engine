@@ -11,6 +11,8 @@ from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.intervals import Intervals
 from pitwall_telemetry_engine.schemas.laps import Laps
 from pitwall_telemetry_engine.schemas.location import Location
+from pitwall_telemetry_engine.schemas.pit import Pit
+from pitwall_telemetry_engine.schemas.position import Position
 from pitwall_telemetry_engine.schemas.race_control import RaceControlMessage
 from pitwall_telemetry_engine.schemas.sessions import Sessions
 from pitwall_telemetry_engine.schemas.stints import Stints
@@ -163,6 +165,56 @@ def get_intervals(
     return [Intervals(**r) for r in records]
 
 
+def get_position(
+    session_key: str | int = "latest", driver_number: int | None = None
+) -> list[Position]:
+    """Fetches official race position history for a session."""
+    resolved_key = _resolve_session_key(session_key)
+    full_cache_path = CACHE_DIR / str(resolved_key) / "position.json"
+
+    if full_cache_path.exists():
+        raw_text = full_cache_path.read_text(encoding="utf-8")
+        records = json.loads(raw_text)
+        if driver_number is not None:
+            records = [r for r in records if r.get("driver_number") == driver_number]
+        return [Position(**r) for r in records]
+
+    if driver_number is not None:
+        url = f"{BASE_URL}/position?session_key={resolved_key}&driver_number={driver_number}"
+        cache_path = CACHE_DIR / str(resolved_key) / f"position_{driver_number}.json"
+    else:
+        url = f"{BASE_URL}/position?session_key={resolved_key}"
+        cache_path = full_cache_path
+
+    records = _fetch_or_cache(cache_path, url, schema_cls=Position, indent=None)
+    return [Position(**r) for r in records]
+
+
+def get_pit(
+    session_key: str | int = "latest", driver_number: int | None = None
+) -> list[Pit]:
+    """Fetches official pit stop history for a session."""
+    resolved_key = _resolve_session_key(session_key)
+    full_cache_path = CACHE_DIR / str(resolved_key) / "pit.json"
+
+    if full_cache_path.exists():
+        raw_text = full_cache_path.read_text(encoding="utf-8")
+        records = json.loads(raw_text)
+        if driver_number is not None:
+            records = [r for r in records if r.get("driver_number") == driver_number]
+        return [Pit(**r) for r in records]
+
+    if driver_number is not None:
+        url = f"{BASE_URL}/pit?session_key={resolved_key}&driver_number={driver_number}"
+        cache_path = CACHE_DIR / str(resolved_key) / f"pit_{driver_number}.json"
+    else:
+        url = f"{BASE_URL}/pit?session_key={resolved_key}"
+        cache_path = full_cache_path
+
+    records = _fetch_or_cache(cache_path, url, schema_cls=Pit, indent=None)
+    return [Pit(**r) for r in records]
+
+
 def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessage]:
     """Fetches FIA Race Control messages and flag events for a session."""
     resolved_key = _resolve_session_key(session_key)
@@ -215,6 +267,9 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
 
     # 1. Fetch laps for this driver to find a single clean flying lap
     lap_points: list[Location] = []
+    s1_ratio = 0.333
+    s2_ratio = 0.666
+
     if sample_driver is not None:
         laps = get_laps(resolved_key, driver_number=sample_driver)
         valid_laps = [
@@ -227,6 +282,10 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
         if valid_laps:
             # Pick fastest clean lap
             best_lap = min(valid_laps, key=lambda lap: lap.lap_duration)
+            if best_lap.duration_sector_1 and best_lap.duration_sector_2 and best_lap.lap_duration:
+                s1_ratio = best_lap.duration_sector_1 / best_lap.lap_duration
+                s2_ratio = (best_lap.duration_sector_1 + best_lap.duration_sector_2) / best_lap.lap_duration
+
             if best_lap.date_start and best_lap.lap_duration:
                 start_dt = best_lap.date_start
                 end_dt = start_dt + timedelta(seconds=best_lap.lap_duration)
@@ -288,6 +347,8 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     geometry = {
         "points": smoothed_pts,
         "bounds": bounds,
+        "s1_ratio": s1_ratio,
+        "s2_ratio": s2_ratio,
     }
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -366,10 +427,12 @@ def warm_session_cache(
     # 2. Macro race datasets (Full 20-car field)
     print("  📍 Pre-calculating track geometry...")
     get_track_geometry(resolved_key)
-    print("  ⏱️  Fetching intervals, laps, stints, race control...")
+    print("  ⏱️  Fetching intervals, positions, laps, stints, pit, race control...")
     get_intervals(resolved_key)
+    get_position(resolved_key)
     get_laps(resolved_key)
     get_stints(resolved_key)
+    get_pit(resolved_key)
     get_race_control(resolved_key)
 
     # 3. GPS Locations (partitioned per driver to prevent timeouts)
