@@ -55,7 +55,7 @@
 
 ## Project Overview
 
-**Pitwall Telemetry Engine** is an enterprise-grade, broadcast-quality Formula 1 telemetry ingestion, replay, and strategy inference engine. It simulates real-time race broadcasts with 60 FPS multi-car spatial tracking, head-to-head cockpit telemetry comparisons, live wheel-to-wheel battle detection, and official FIA race control synchronization.
+**Pitwall Telemetry Engine** is an Formula 1 telemetry ingestion, replay, and strategy inference engine. It simulates real-time race broadcasts with 60 FPS multi-car spatial tracking, head-to-head cockpit telemetry comparisons, live wheel-to-wheel battle detection, and official FIA race control synchronization.
 
 Unlike static post-race analysis dashboards, Pitwall Telemetry Engine treats Formula 1 data as a synchronized, high-frequency continuous event stream. It ingests asynchronous, multi-modal telemetry streams from OpenF1 (including 20-car GPS positions, powertrain sensors, tire stint logs, sector splits, and race control flags) and compiles them into smooth, sub-frame interpolated 60 Hz timeline frames pushed directly to modern web browsers over unbuffered WebSockets.
 
@@ -114,8 +114,6 @@ flowchart TD
    External telemetry providers like OpenF1 enforce strict rate-limiting policies (`429 Too Many Requests`). Querying full vehicle coordinates, car data, lap times, pit stops, and intervals for 20 drivers across a 2-hour Grand Prix requires hundreds of HTTP requests. By pre-warming the sessions on the server's NVMe SSD, all file lookups execute in sub-millisecond local time, eliminating runtime API dependency during live user sessions.
 2. **Why Asynchronous 60 FPS WebSocket Streaming Over HTTP Polling?**  
    HTTP polling introduces significant header overhead (~1 KB per request), TCP socket churn, and clock skew between client and server. A persistent WebSocket connection combined with Nginx unbuffered streaming (`proxy_buffering off`) pushes unified frames every 16.6 milliseconds, maintaining synchronization across all visual components.
-3. **Why Broadcast Badges Over Informal Emojis?**  
-   To mirror the aesthetic of Formula 1 TV graphics and AWS Insights broadcasts, telemetry indicators must remain crisp, legible, and professional. Informal emojis (such as `⚔️` or `⚡`) have been replaced with high-contrast, glowing typography badges (`BATTLE`, `DRS`, `TRACK CLEAR`, `SC`) styled with dedicated CSS glow animations.
 
 ---
 
