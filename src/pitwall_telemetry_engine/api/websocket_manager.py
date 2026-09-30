@@ -27,7 +27,23 @@ class ConnectionManager:
         await websocket.accept()
 
         key = int(session_key) if str(session_key).isdigit() else session_key
-        replayer = await asyncio.to_thread(TimelineReplayer, key, 30)
+        try:
+            replayer = await asyncio.to_thread(TimelineReplayer, key, 30)
+        except Exception as e:
+            print(f"Error initializing TimelineReplayer for session {key}: {e}")
+            try:
+                await websocket.send_json(
+                    {
+                        "error": True,
+                        "type": "error",
+                        "message": f"Telemetry unavailable for session {key}: {str(e)}",
+                    }
+                )
+                await asyncio.sleep(0.1)
+                await websocket.close(code=4004, reason="Session unavailable")
+            except Exception:
+                pass
+            return
 
         session = ClientSession(websocket, replayer, key)
         self.sessions[websocket] = session

@@ -110,6 +110,10 @@ function updateBounds() {
 async function loadTrackGeometry() {
   try {
     const res = await fetch(`/api/track-geometry?session_key=${state.sessionKey}`);
+    if (!res.ok) {
+      console.warn('[TrackMap] Track geometry unavailable for session:', state.sessionKey);
+      return;
+    }
     const data = await res.json();
 
     const points = data.points || data.geometry || (Array.isArray(data) ? data : []);

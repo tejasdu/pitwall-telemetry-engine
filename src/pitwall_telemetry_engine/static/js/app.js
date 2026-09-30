@@ -85,6 +85,28 @@ function connectWebSocket() {
     ws.onmessage = (event) => {
         try {
             const frame = JSON.parse(event.data);
+
+            // Handle server-side telemetry availability error
+            if (frame.error || frame.type === 'error') {
+                console.error('[Pitwall] Telemetry error:', frame.message);
+                updateTicker(`⚠️ ${frame.message.toUpperCase()}`);
+
+                // Re-open Mission Control so user can select another race
+                const overlay = document.getElementById('mission-control-overlay');
+                if (overlay) overlay.classList.remove('hidden');
+
+                const launchBtn = document.getElementById('mc-launch-btn');
+                if (launchBtn) {
+                    launchBtn.innerHTML = 'LAUNCH ENGINE';
+                    launchBtn.disabled = false;
+                }
+                const yearSelect = document.getElementById('mc-year-select');
+                const sessionSelect = document.getElementById('mc-session-select');
+                if (yearSelect) yearSelect.disabled = false;
+                if (sessionSelect) sessionSelect.disabled = false;
+                return;
+            }
+
             state.latestFrame = frame;
             state.isPlaying = frame.is_playing;
             state.playbackSpeed = frame.playback_speed;
@@ -101,11 +123,32 @@ function connectWebSocket() {
         }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
         if (isIntentionalDisconnect) {
             console.log('[Pitwall] WebSocket closed intentionally by user.');
             return;
         }
+
+        // If the session has no telemetry recorded (server code 4004), abort reconnect loop
+        if (event.code === 4004) {
+            console.warn('[Pitwall] Session unavailable (code 4004). Reconnect aborted.');
+            updateTicker('SESSION HAS NO TELEMETRY DATA &bull; PLEASE SELECT ANOTHER GRAND PRIX');
+
+            const overlay = document.getElementById('mission-control-overlay');
+            if (overlay) overlay.classList.remove('hidden');
+
+            const launchBtn = document.getElementById('mc-launch-btn');
+            if (launchBtn) {
+                launchBtn.innerHTML = 'LAUNCH ENGINE';
+                launchBtn.disabled = false;
+            }
+            const yearSelect = document.getElementById('mc-year-select');
+            const sessionSelect = document.getElementById('mc-session-select');
+            if (yearSelect) yearSelect.disabled = false;
+            if (sessionSelect) sessionSelect.disabled = false;
+            return;
+        }
+
         console.warn('[Pitwall] WebSocket closed. Reconnecting in 2 seconds...');
         updateTicker('STREAM DISCONNECTED &bull; RECONNECTING...');
         reconnectTimer = setTimeout(connectWebSocket, 2000);
@@ -323,17 +366,9 @@ async function loadSessionsForYear(year) {
         const response = await fetch(`/api/sessions?year=${year}`);
         let sessions = await response.json();
 
-        // Filter out future races that haven't happened yet
+        // Filter out future races that have not started yet
         const now = new Date();
         sessions = sessions.filter(s => new Date(s.date_start) <= now);
-
-        // Explicitly filter out cancelled 2026 Saudi Arabia & Bahrain GP from OpenF1 dataset (including the Kuala Lumpur data anomaly)
-        sessions = sessions.filter(s => {
-            if (s.year === 2026 && (s.country_name === 'Saudi Arabia' || s.country_name === 'Bahrain')) {
-                return false;
-            }
-            return true;
-        });
 
         // Sort officially by FIA meeting_key rather than date_start to handle rescheduled races perfectly
         sessions.sort((a, b) => a.meeting_key - b.meeting_key);
@@ -388,15 +423,15 @@ function initMissionControl() {
         });
     }
 
-    // Dynamically populate championship years up to current year
-    const currentYear = new Date().getFullYear();
+    // Populate championship years from 2023 through current season
+    const availableYears = [2026, 2025, 2024, 2023];
     yearSelect.innerHTML = '';
-    for (let y = currentYear; y >= 2023; y--) {
+    availableYears.forEach(y => {
         const opt = document.createElement('option');
         opt.value = y;
-        opt.textContent = y;
+        opt.textContent = `${y} Championship`;
         yearSelect.appendChild(opt);
-    }
+    });
 
     // Initial load for default year
     loadSessionsForYear(yearSelect.value);

@@ -7,8 +7,8 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_car_data,
     get_drivers,
     get_intervals,
-    get_location,
     get_laps,
+    get_location,
     get_pit,
     get_position,
     get_race_control,
@@ -110,9 +110,17 @@ class TimelineReplayer:
         self.session = get_session(session_key)
         self.drivers: dict[int, Driver] = get_drivers(session_key)
 
+        if not self.drivers:
+            raise ValueError(f"No driver or telemetry records found for session {session_key}")
+
+        if not self.session.date_start or not self.session.date_end:
+            raise ValueError(f"Session {session_key} does not have valid start and end timestamps")
+
         # 2. Set simulation time boundaries (Unix epoch seconds)
         self.start_time = self.session.date_start.timestamp()
         self.end_time = self.session.date_end.timestamp()
+        if self.end_time <= self.start_time:
+            raise ValueError(f"Session {session_key} duration is invalid (end <= start)")
         self.t_sim = self.start_time
 
         # 3. Playback control state
@@ -135,6 +143,13 @@ class TimelineReplayer:
                 telemetry=tel,
                 session_start_time=self.start_time,
             )
+
+        # Ensure that at least one driver has telemetry or coordinates
+        has_any_data = any(
+            len(tl.telemetry) > 0 or len(tl.loc_times) > 0 for tl in self.timelines.values()
+        )
+        if not has_any_data:
+            raise ValueError(f"No telemetry or GPS coordinates recorded for session {session_key}")
 
         # 5. Load and index macro intervals, positions & race control events
         self.intervals = sorted(get_intervals(session_key), key=lambda i: i.date)
@@ -317,7 +332,7 @@ class TimelineReplayer:
     def get_latest_intervals(self) -> dict[int, dict]:
         """Returns the latest position, gap, and interval for each driver at t_sim."""
         latest_by_driver: dict[int, dict] = {}
-        
+
         # 1. Fetch latest official positions
         if self.position_times:
             idx = bisect_right(self.position_times, self.t_sim) - 1
@@ -435,11 +450,11 @@ class TimelineReplayer:
         # 4. Gaps, battles, and status flags (PIT / DNF)
         intervals_map = self.get_latest_intervals()
         battles = self.detect_battles(flag, intervals_map)
-        
+
         for d_num in self.drivers.keys():
             if d_num not in intervals_map:
                 intervals_map[d_num] = {}
-            
+
             in_pit = False
             pits = self.pits_by_driver.get(d_num, [])
             pit_count = 0
@@ -450,7 +465,7 @@ class TimelineReplayer:
                     end_time = p.date.timestamp() + p.pit_duration
                     if p.date.timestamp() <= self.t_sim <= end_time:
                         in_pit = True
-            
+
             is_dnf = False
             tl = self.timelines.get(d_num)
             if not in_pit and flag not in ("RED", "SC", "CHEQUERED"):
@@ -525,7 +540,7 @@ class TimelineReplayer:
             else:
                 # Keep stream alive but do not advance clock
                 frame = self.assemble_frame(selected_drivers=selected)
-                
+
             yield frame
 
             # Drift compensation: sleep only the remaining time in this frame window

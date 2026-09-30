@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -22,6 +23,18 @@ DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 CACHE_DIR = Path(__file__).parent.parent.parent.parent / ".cache" / "sessions"
 
 
+_file_locks = {}
+_file_locks_lock = threading.Lock()
+
+
+def _get_file_lock(file_path: Path) -> threading.Lock:
+    path_str = str(file_path)
+    with _file_locks_lock:
+        if path_str not in _file_locks:
+            _file_locks[path_str] = threading.Lock()
+        return _file_locks[path_str]
+
+
 def _fetch_or_cache(
     cache_file_path: Path,
     url: str,
@@ -30,13 +43,21 @@ def _fetch_or_cache(
 ) -> list[dict] | dict:
     """Helper function: Lazy cacheing mechanism for OpenF1 API calls, saving straight to disk"""
 
-    # 1. If cache hit, read from disk
+    # 1. Quick cache hit check
     if cache_file_path.exists():
         raw_text = cache_file_path.read_text(encoding="utf-8")
         return json.loads(raw_text)
 
-    # 2. Cache miss: query OpenF1 API
-    response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+    # 2. Cache miss: Acquire thread lock to prevent thundering herd
+    file_lock = _get_file_lock(cache_file_path)
+    with file_lock:
+        # Double-check inside the lock in case another thread just finished caching it
+        if cache_file_path.exists():
+            raw_text = cache_file_path.read_text(encoding="utf-8")
+            return json.loads(raw_text)
+
+        # Still a cache miss: query OpenF1 API
+        response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
 
     # OpenF1 returns 404; no records
     if response.status_code == 404:
@@ -190,9 +211,7 @@ def get_position(
     return [Position(**r) for r in records]
 
 
-def get_pit(
-    session_key: str | int = "latest", driver_number: int | None = None
-) -> list[Pit]:
+def get_pit(session_key: str | int = "latest", driver_number: int | None = None) -> list[Pit]:
     """Fetches official pit stop history for a session."""
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "pit.json"
@@ -251,7 +270,7 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     """
     Extracts clean circuit centerline geometry coordinates from a single GREEN flying lap of a driver,
     applying Catmull-Rom spline interpolation to get a smooth, closed racing track.
-    Caches the pre-calculated geometry directly on disk. 
+    Caches the pre-calculated geometry directly on disk.
     """
     resolved_key = _resolve_session_key(session_key)
     cache_path = CACHE_DIR / str(resolved_key) / "track_geometry.json"
@@ -273,8 +292,11 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     if sample_driver is not None:
         laps = get_laps(resolved_key, driver_number=sample_driver)
         valid_laps = [
-            lap for lap in laps
-            if lap.lap_duration and lap.lap_duration > 60 and not getattr(lap, "is_pit_out_lap", False)
+            lap
+            for lap in laps
+            if lap.lap_duration
+            and lap.lap_duration > 60
+            and not getattr(lap, "is_pit_out_lap", False)
         ]
         if not valid_laps:
             valid_laps = [lap for lap in laps if lap.lap_duration and lap.lap_duration > 60]
@@ -284,15 +306,16 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
             best_lap = min(valid_laps, key=lambda lap: lap.lap_duration)
             if best_lap.duration_sector_1 and best_lap.duration_sector_2 and best_lap.lap_duration:
                 s1_ratio = best_lap.duration_sector_1 / best_lap.lap_duration
-                s2_ratio = (best_lap.duration_sector_1 + best_lap.duration_sector_2) / best_lap.lap_duration
+                s2_ratio = (
+                    best_lap.duration_sector_1 + best_lap.duration_sector_2
+                ) / best_lap.lap_duration
 
             if best_lap.date_start and best_lap.lap_duration:
                 start_dt = best_lap.date_start
                 end_dt = start_dt + timedelta(seconds=best_lap.lap_duration)
                 all_locs = get_location(resolved_key, driver_number=sample_driver)
                 lap_points = [
-                    p for p in all_locs
-                    if start_dt <= p.date <= end_dt and (p.x != 0 or p.y != 0)
+                    p for p in all_locs if start_dt <= p.date <= end_dt and (p.x != 0 or p.y != 0)
                 ]
 
     # Fallback if lap isolation yielded too few points

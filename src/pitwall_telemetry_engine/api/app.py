@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import uvicorn
@@ -16,9 +17,11 @@ app = FastAPI(
 )
 
 # CORS middleware
+origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,11 +50,12 @@ def root():
 
 
 def start():
+    is_dev = os.getenv("ENVIRONMENT", "production").lower() == "development"
     uvicorn.run(
         "pitwall_telemetry_engine.api.app:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=is_dev,
     )
 
 

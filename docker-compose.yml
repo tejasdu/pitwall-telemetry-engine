@@ -1,27 +1,26 @@
 services:
-  # 1. Redis 7 Stream Buffer (f1:telemetry:raw)
-  redis:
-    image: redis:7-alpine
-    container_name: pitwall-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-  # 2. FastAPI Web App & 60 FPS WebSocket Server
+  # FastAPI Web App & 60 FPS WebSocket Server
   pitwall-web:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: pitwall-web
-    depends_on:
-      - redis
+    expose:
+      - "8000"
     environment:
-      - REDIS_URL=redis://redis:6379
-    ports:
-      - "8000:8000"
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./.cache:/app/.cache
     restart: unless-stopped
 
-volumes:
-  redis_data:
+  # Nginx Reverse Proxy for WebSocket Upgrades & Future TLS Termination
+  nginx:
+    image: nginx:alpine
+    container_name: pitwall-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - pitwall-web
+    restart: unless-stopped

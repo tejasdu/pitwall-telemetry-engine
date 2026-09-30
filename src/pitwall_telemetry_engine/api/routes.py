@@ -25,7 +25,10 @@ def latest_session():
 
 @router.get("/track-geometry")
 def track_geometry(session_key: str | int = "latest", sample_driver: int | None = None):
-    return get_track_geometry(session_key=session_key, sample_driver=sample_driver)
+    try:
+        return get_track_geometry(session_key=session_key, sample_driver=sample_driver)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Track geometry unavailable: {str(e)}")
 
 
 @router.get("/race-control")
