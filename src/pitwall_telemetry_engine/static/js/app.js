@@ -379,9 +379,15 @@ async function loadSessionsForYear(year) {
         const response = await fetch(`/api/sessions?year=${year}`);
         let sessions = await response.json();
 
-        // Filter out future races that have not started yet
+        // Filter out future races that have not started yet, cancelled races, and non-events
         const now = new Date();
-        sessions = sessions.filter(s => new Date(s.date_start) <= now);
+        sessions = sessions.filter(s => {
+            if (new Date(s.date_start) > now) return false;
+            if (s.is_cancelled) return false;
+            // Imola 2023 was officially cancelled due to floods (no telemetry exists)
+            if (s.year === 2023 && (s.session_key === 9086 || s.circuit_short_name === 'Imola')) return false;
+            return true;
+        });
 
         // Sort officially by FIA meeting_key rather than date_start to handle rescheduled races perfectly
         sessions.sort((a, b) => a.meeting_key - b.meeting_key);

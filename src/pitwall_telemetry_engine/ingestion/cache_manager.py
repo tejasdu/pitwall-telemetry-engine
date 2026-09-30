@@ -244,7 +244,14 @@ def prewarm_year(year: int, force: bool = False) -> None:
     all_sessions = get_sessions(year=year, session_name="Race")
 
     now = datetime.now(timezone.utc)
-    completed_sessions = [s for s in all_sessions if s.date_start and s.date_start <= now]
+    completed_sessions = [
+        s
+        for s in all_sessions
+        if s.date_start
+        and s.date_start <= now
+        and not getattr(s, "is_cancelled", False)
+        and not (s.year == 2023 and (s.session_key == 9086 or s.circuit_short_name == "Imola"))
+    ]
 
     # Sort oldest to newest
     completed_sessions.sort(key=lambda s: s.date_start)
