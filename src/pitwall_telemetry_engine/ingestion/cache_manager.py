@@ -161,6 +161,14 @@ def delete_session(session_key: str | int) -> bool:
 def prewarm_session(session_key: str | int, force: bool = False) -> bool:
     """Pre-caches all telemetry, intervals, track geometry, and coordinates for a race."""
     key = int(session_key)
+
+    # Skip immediately if session is already complete on disk
+    if not force:
+        audit = audit_session(key)
+        if audit["is_complete"]:
+            print(f"⏩ [Skip] Session {key} is already 100% COMPLETE in cache.")
+            return True
+
     print(f"\n🚀 [Pitwall Cache Manager] Pre-warming session {key}...")
     start_time = time.perf_counter()
 
@@ -250,6 +258,13 @@ def prewarm_year(year: int, force: bool = False) -> None:
         time.sleep(1.0)
 
 
+def prewarm_all(force: bool = False) -> None:
+    """Pre-warms all completed race sessions across all supported championship seasons."""
+    print("\n🌍 [Pitwall Cache Manager] Pre-warming ALL completed races from 2023 to 2026...")
+    for y in [2026, 2025, 2024, 2023]:
+        prewarm_year(y, force=force)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pitwall Telemetry Cache Manager")
     parser.add_argument(
@@ -257,6 +272,11 @@ def main():
     )
     parser.add_argument(
         "--year", type=int, help="Pre-cache all completed races for a year (e.g. 2024)"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Pre-cache all completed races across all supported seasons (2023-2026)",
     )
     parser.add_argument("--audit", action="store_true", help="Audit all cached sessions on disk")
     parser.add_argument(
@@ -287,6 +307,10 @@ def main():
 
     if args.delete:
         delete_session(args.delete)
+        return
+
+    if args.all:
+        prewarm_all(force=args.force)
         return
 
     if args.year:
