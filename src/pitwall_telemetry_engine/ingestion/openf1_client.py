@@ -286,18 +286,26 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
         raw_text = cache_path.read_text(encoding="utf-8")
         return json.loads(raw_text)
 
-    # If no sample driver is given, pick the first driver in the registry
-    if sample_driver is None:
-        registry = get_drivers(resolved_key)
-        sample_driver = next(iter(registry.keys())) if registry else None
+    # 1. Identify candidate drivers with clean laps
+    registry = get_drivers(resolved_key)
+    all_laps = get_laps(resolved_key)
+    lap_counts: dict[int, int] = {}
+    for lap_record in all_laps:
+        if lap_record.lap_duration and lap_record.lap_duration > 60:
+            lap_counts[lap_record.driver_number] = lap_counts.get(lap_record.driver_number, 0) + 1
 
-    # 1. Fetch laps for this driver to find a single clean flying lap
+    candidate_drivers = [sample_driver] if sample_driver is not None else []
+    if not candidate_drivers and lap_counts:
+        candidate_drivers = sorted(lap_counts.keys(), key=lambda d: lap_counts[d], reverse=True)
+    elif not candidate_drivers and registry:
+        candidate_drivers = list(registry.keys())
+
     lap_points: list[Location] = []
     s1_ratio = 0.333
     s2_ratio = 0.666
 
-    if sample_driver is not None:
-        laps = get_laps(resolved_key, driver_number=sample_driver)
+    for drv_num in candidate_drivers:
+        laps = get_laps(resolved_key, driver_number=drv_num)
         valid_laps = [
             lap
             for lap in laps
@@ -309,7 +317,6 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
             valid_laps = [lap for lap in laps if lap.lap_duration and lap.lap_duration > 60]
 
         if valid_laps:
-            # Pick fastest clean lap
             best_lap = min(valid_laps, key=lambda lap: lap.lap_duration)
             if best_lap.duration_sector_1 and best_lap.duration_sector_2 and best_lap.lap_duration:
                 s1_ratio = best_lap.duration_sector_1 / best_lap.lap_duration
@@ -320,18 +327,33 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
             if best_lap.date_start and best_lap.lap_duration:
                 start_dt = best_lap.date_start
                 end_dt = start_dt + timedelta(seconds=best_lap.lap_duration)
-                all_locs = get_location(resolved_key, driver_number=sample_driver)
-                lap_points = [
+                all_locs = get_location(resolved_key, driver_number=drv_num)
+                pts = [
                     p for p in all_locs if start_dt <= p.date <= end_dt and (p.x != 0 or p.y != 0)
                 ]
+                if len(pts) >= 20:
+                    lap_points = pts
+                    break
 
     # Fallback if lap isolation yielded too few points
     if len(lap_points) < 20:
-        all_locs = get_location(resolved_key, driver_number=sample_driver)
-        lap_points = [p for p in all_locs if p.x != 0 or p.y != 0][:400]
+        for drv_num in candidate_drivers[:3]:
+            all_locs = get_location(resolved_key, driver_number=drv_num)
+            pts = [p for p in all_locs if p.x != 0 or p.y != 0][:400]
+            if len(pts) >= 20:
+                lap_points = pts
+                break
 
     if not lap_points:
-        return {"points": [], "bounds": {"min_x": 0, "max_x": 1, "min_y": 0, "max_y": 1}}
+        fallback_geom = {
+            "points": [],
+            "bounds": {"min_x": 0, "max_x": 1, "min_y": 0, "max_y": 1},
+            "s1_ratio": 0.333,
+            "s2_ratio": 0.666,
+        }
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(fallback_geom, indent=2), encoding="utf-8")
+        return fallback_geom
 
     raw_pts = [{"x": float(p.x), "y": float(p.y)} for p in lap_points]
 

@@ -199,11 +199,7 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
         get_laps(key)
         get_stints(key)
 
-        # 4. Track Geometry
-        print("  • Generating Catmull-Rom track geometry spline...")
-        get_track_geometry(key)
-
-        # 5. Driver Telemetry & GPS Coordinates (with gentle throttling to prevent 429s)
+        # 4. Driver Telemetry & GPS Coordinates (with gentle throttling to prevent 429s)
         print("  • Downloading high-frequency car telemetry & GPS locations...")
         for idx, d_num in enumerate(driver_numbers, start=1):
             drv = drivers[d_num]
@@ -228,6 +224,10 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
                 get_location(key, driver_number=d_num)
                 print("done")
                 time.sleep(0.15)
+
+        # 5. Track Geometry (generates spline from cached locations)
+        print("  • Generating Catmull-Rom track geometry spline...")
+        get_track_geometry(key)
 
         elapsed = time.perf_counter() - start_time
         print(f"✅ Session {key} successfully pre-warmed and verified in {elapsed:.1f}s!\n")
