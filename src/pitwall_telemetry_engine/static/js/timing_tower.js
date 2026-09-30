@@ -115,7 +115,7 @@ function getOrCreateRow(driverNumber, initialMeta) {
             <span class="pit-count" data-slot="pit-count"></span>
         </div>
         <span class="gap-delta" data-slot="gap">--</span>
-        <span class="battle-indicator" data-slot="battle" style="display: none; margin-left: 6px; font-size: 11px; cursor: pointer;" title="Active Battle &bull; Click to Compare">⚔️</span>
+        <span class="battle-tag" data-slot="battle" style="display: none;" title="Active Battle &bull; Click to Compare">BATTLE</span>
     `;
 
     // Row click handler: selects this driver for head-to-head cockpit comparison
@@ -342,13 +342,13 @@ function handleTowerFrame(frame) {
             }
         }
 
-        // Slot 4: Battle ⚔️ Indicator
+        // Slot 4: Battle Indicator Badge
         const battleEl = row.querySelector('[data-slot="battle"]');
         const activeBattle = battleMap.get(item.driverNumber);
         if (battleEl) {
             if (activeBattle && activeBattle.gap <= 1.000) {
-                battleEl.style.display = 'inline';
-                battleEl.title = `Battling ahead: ${activeBattle.gap.toFixed(3)}s gap`;
+                battleEl.style.display = 'inline-flex';
+                battleEl.title = `Battling ahead: ${activeBattle.gap.toFixed(3)}s gap • Click to compare`;
             } else {
                 battleEl.style.display = 'none';
             }

@@ -168,13 +168,18 @@ class TimelineReplayer:
             self.pits_by_driver[p.driver_number].append(p)
 
         self.laps_by_driver = {}
-        for lap in get_laps(session_key):
+        all_laps = get_laps(session_key)
+        for lap in all_laps:
             if lap.driver_number not in self.laps_by_driver:
                 self.laps_by_driver[lap.driver_number] = []
             if lap.lap_duration and lap.date_start:
                 self.laps_by_driver[lap.driver_number].append(lap)
         for d in self.laps_by_driver:
             self.laps_by_driver[d].sort(key=lambda x: x.date_start)
+
+        self.total_laps = max(
+            (lap.lap_number for lap in all_laps if lap.lap_number is not None), default=0
+        )
 
         self.starting_positions = {}
         for p in sorted(get_position(session_key), key=lambda x: x.date):
@@ -493,7 +498,37 @@ class TimelineReplayer:
             intervals_map[d_num]["last_lap_time"] = last_lap
             intervals_map[d_num]["pos_change"] = pos_change
 
-        # 5. Progress calculation
+        # 5. Lap tracking & progress calculation
+        current_lap = 1 if self.total_laps > 0 else 0
+        leader_driver = None
+        for d_num, data in intervals_map.items():
+            if data.get("position") == 1:
+                leader_driver = d_num
+                break
+
+        if leader_driver is not None and leader_driver in self.laps_by_driver:
+            for lap in self.laps_by_driver[leader_driver]:
+                if lap.date_start and lap.date_start.timestamp() <= self.t_sim:
+                    current_lap = lap.lap_number
+                    if (
+                        lap.lap_duration
+                        and (lap.date_start.timestamp() + lap.lap_duration) <= self.t_sim
+                    ):
+                        current_lap = min(self.total_laps, lap.lap_number + 1)
+        else:
+            for d_laps in self.laps_by_driver.values():
+                for lap in d_laps:
+                    if lap.date_start and lap.date_start.timestamp() <= self.t_sim:
+                        current_lap = max(current_lap, lap.lap_number)
+                        if (
+                            lap.lap_duration
+                            and (lap.date_start.timestamp() + lap.lap_duration) <= self.t_sim
+                        ):
+                            current_lap = max(current_lap, lap.lap_number + 1)
+
+        if self.total_laps > 0:
+            current_lap = min(max(1, current_lap), self.total_laps)
+
         total_duration = max(1.0, self.end_time - self.start_time)
         progress_pct = round(
             max(0.0, min(1.0, (self.t_sim - self.start_time) / total_duration)) * 100,
@@ -503,6 +538,8 @@ class TimelineReplayer:
         return {
             "t_sim": self.t_sim,
             "t_sim_iso": datetime.fromtimestamp(self.t_sim, tz=timezone.utc).isoformat(),
+            "current_lap": current_lap,
+            "total_laps": self.total_laps,
             "progress_pct": progress_pct,
             "is_playing": self.is_playing,
             "playback_speed": self.playback_speed,

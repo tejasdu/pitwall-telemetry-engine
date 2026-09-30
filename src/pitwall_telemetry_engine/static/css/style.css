@@ -443,25 +443,32 @@ body {
 .battle-tag {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    background: rgba(155, 81, 224, 0.2);
-    color: #C084FC;
-    border: 1px solid rgba(155, 81, 224, 0.4);
-    animation: pulse-border 1s infinite alternate;
+    gap: 3px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    letter-spacing: 0.8px;
+    background: rgba(168, 85, 247, 0.2);
+    color: #E9D5FF;
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    animation: battle-pulse 1.2s infinite alternate;
+    margin-left: 6px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1.2;
 }
 
-@keyframes pulse-border {
+@keyframes battle-pulse {
     0% {
-        border-color: rgba(155, 81, 224, 0.4);
+        border-color: rgba(168, 85, 247, 0.4);
+        box-shadow: 0 0 3px rgba(168, 85, 247, 0.2);
     }
 
     100% {
-        border-color: rgba(155, 81, 224, 1.0);
-        box-shadow: 0 0 8px rgba(155, 81, 224, 0.5);
+        border-color: rgba(216, 180, 254, 0.9);
+        box-shadow: 0 0 8px rgba(192, 132, 252, 0.6);
     }
 }
 

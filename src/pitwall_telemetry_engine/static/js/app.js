@@ -34,6 +34,10 @@ export function resetApp() {
     state.selectedDrivers = [];
     state.isPlaying = false;
     document.getElementById('session-title').innerText = 'AWAITING SESSION LINK...';
+    const currentLapEl = document.getElementById('current-lap-num');
+    const totalLapsEl = document.getElementById('total-laps-num');
+    if (currentLapEl) currentLapEl.textContent = '--';
+    if (totalLapsEl) totalLapsEl.textContent = '--';
 }
 
 let ws = null;
@@ -173,8 +177,18 @@ function connectWebSocket() {
     };
 }
 
-// Updates the Top Header HUD (Clock, Flag status, Race Control Ticker)
+// Updates the Top Header HUD (Clock, Flag status, Race Control Ticker, Lap Counter)
 function updateHeaderHUD(frame) {
+
+    // Lap Counter
+    const currentLapEl = document.getElementById('current-lap-num');
+    const totalLapsEl = document.getElementById('total-laps-num');
+    if (currentLapEl && frame.current_lap !== undefined) {
+        currentLapEl.textContent = frame.current_lap || 1;
+    }
+    if (totalLapsEl && frame.total_laps !== undefined) {
+        totalLapsEl.textContent = frame.total_laps > 0 ? frame.total_laps : '--';
+    }
 
     // Clock
     const clockEl = document.getElementById('race-clock');
