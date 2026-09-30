@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -56,8 +57,14 @@ def _fetch_or_cache(
             raw_text = cache_file_path.read_text(encoding="utf-8")
             return json.loads(raw_text)
 
-        # Still a cache miss: query OpenF1 API
-        response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+        # Still a cache miss: query OpenF1 API with retry on 429 rate limit
+        response = None
+        for attempt in range(4):
+            response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
+            if response.status_code == 429 and attempt < 3:
+                time.sleep(1.0 * (2**attempt))
+                continue
+            break
 
     # OpenF1 returns 404; no records
     if response.status_code == 404:

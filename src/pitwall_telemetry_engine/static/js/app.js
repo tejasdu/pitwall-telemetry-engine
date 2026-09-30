@@ -24,6 +24,9 @@ export function resetApp() {
         reconnectTimer = null;
     }
     if (ws) {
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.onmessage = null;
         ws.close();
         ws = null;
     }
@@ -89,6 +92,11 @@ function connectWebSocket() {
             // Handle server-side telemetry availability error
             if (frame.error || frame.type === 'error') {
                 console.error('[Pitwall] Telemetry error:', frame.message);
+                isIntentionalDisconnect = true;
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
                 updateTicker(`⚠️ ${frame.message.toUpperCase()}`);
 
                 // Re-open Mission Control so user can select another race
@@ -132,6 +140,11 @@ function connectWebSocket() {
         // If the session has no telemetry recorded (server code 4004), abort reconnect loop
         if (event.code === 4004) {
             console.warn('[Pitwall] Session unavailable (code 4004). Reconnect aborted.');
+            isIntentionalDisconnect = true;
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
             updateTicker('SESSION HAS NO TELEMETRY DATA &bull; PLEASE SELECT ANOTHER GRAND PRIX');
 
             const overlay = document.getElementById('mission-control-overlay');
