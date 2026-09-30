@@ -216,14 +216,14 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
                 sys.stdout.flush()
                 get_car_data(key, driver_number=d_num)
                 print("done")
-                time.sleep(0.15)  # Polite sleep to respect OpenF1 rate limits
+                time.sleep(0.25)  # Polite sleep to respect OpenF1 rate limits
 
             if need_loc:
                 sys.stdout.write(f"    [{idx}/{len(driver_numbers)}] {tag} location... ")
                 sys.stdout.flush()
                 get_location(key, driver_number=d_num)
                 print("done")
-                time.sleep(0.15)
+                time.sleep(0.25)
 
         # 5. Track Geometry (generates spline from cached locations)
         print("  • Generating Catmull-Rom track geometry spline...")
@@ -255,7 +255,7 @@ def prewarm_year(year: int, force: bool = False) -> None:
             f"=== [{idx}/{len(completed_sessions)}] {s.country_name} GP ({s.circuit_short_name}) - Key {s.session_key} ==="
         )
         prewarm_session(s.session_key, force=force)
-        time.sleep(1.0)
+        time.sleep(2.0)
 
 
 def prewarm_all(force: bool = False) -> None:

@@ -62,7 +62,11 @@ def _fetch_or_cache(
         for attempt in range(4):
             response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
             if response.status_code == 429 and attempt < 3:
-                time.sleep(1.0 * (2**attempt))
+                cooldown = 15.0 * (attempt + 1)
+                print(
+                    f"\n⏳ [Rate Limit 429] Cooling down for {cooldown:.0f}s before retry {attempt + 1}/3..."
+                )
+                time.sleep(cooldown)
                 continue
             break
 
