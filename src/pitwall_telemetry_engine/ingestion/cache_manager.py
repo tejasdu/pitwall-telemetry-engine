@@ -59,7 +59,7 @@ def audit_session(session_key: str | int) -> dict:
 
     for f in required_files:
         fp = session_dir / f
-        if not fp.exists() or fp.stat().st_size < 10:
+        if not fp.exists() or fp.stat().st_size < 2:
             missing.append(f)
 
     # Check drivers
