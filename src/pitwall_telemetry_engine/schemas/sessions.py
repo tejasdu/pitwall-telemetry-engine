@@ -1,5 +1,7 @@
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
 
 class Sessions(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -13,6 +15,4 @@ class Sessions(BaseModel):
     circuit_short_name: str
     circuit_key: int
     year: int
-
-
-    
+    is_cancelled: bool | None = False

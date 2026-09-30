@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pitwall Telemetry Engine | Broadcast Cockpit</title>
+
+    <meta name="description" content="Ultra-low latency Formula 1 telemetry replayer with real-time 2D track map, dynamic timing tower, and deep cockpit telemetry.">
+    <meta name="theme-color" content="#0B0E14">
+
+    <!-- Favicon (Inline SVG Racing Emblem) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%230B0E14'/><path d='M20 70 L45 30 L55 30 L80 70 L65 70 L50 46 L35 70 Z' fill='%23FF2A55'/><circle cx='50' cy='32' r='8' fill='%2300E599'/></svg>">
+
+    <!-- Open Graph (Facebook, Discord, LinkedIn, iMessage) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Pitwall Telemetry Engine | 60 FPS F1 Cockpit">
+    <meta property="og:description" content="Ultra-low latency Formula 1 telemetry replayer with real-time 2D track map, dynamic timing tower, and deep cockpit telemetry.">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Pitwall Telemetry Engine | 60 FPS F1 Cockpit">
+    <meta name="twitter:description" content="Ultra-low latency Formula 1 telemetry replayer with real-time 2D track map, dynamic timing tower, and deep cockpit telemetry.">
+
+    <!-- Modern Broadcast Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Master Stylesheet -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+
+    <!-- MISSION CONTROL SPLASH OVERLAY -->
+    <div id="mission-control-overlay">
+        <div class="mission-control-modal" style="position: relative;">
+            <button id="mc-close-btn" style="display: none; position: absolute; top: 12px; right: 16px; background: none; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 4px;">&#x2715;</button>
+            <div style="font-size: 24px; font-weight: 800; letter-spacing: 2px; margin-bottom: 4px;">
+                <span style="color: #FF2A55;">PITWALL</span> TELEMETRY
+            </div>
+            <p
+                style="color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 1px; margin-bottom: 24px;">
+                SELECT HISTORIC SESSION
+            </p>
+
+            <div class="mc-form-group">
+                <label>CHAMPIONSHIP YEAR</label>
+                <select id="mc-year-select" class="mc-select">
+                    <!-- Populated dynamically by app.js -->
+                </select>
+            </div>
+
+            <div class="mc-form-group">
+                <label>GRAND PRIX</label>
+                <select id="mc-session-select" class="mc-select" disabled>
+                    <option>Initializing uplink...</option>
+                </select>
+            </div>
+
+            <button id="mc-launch-btn" class="mc-launch-btn" disabled>
+                LAUNCH ENGINE
+            </button>
+        </div>
+    </div>
+
+    <div id="app-container">
+
+        <!-- TIER 1: TOP HEADER / FIA RACE CONTROL HUD -->
+        <header id="header-hud">
+            <div style="display: flex; align-items: center; gap: 14px;">
+                <div
+                    style="font-weight: 800; font-size: 15px; letter-spacing: 1px; color: #FFF; display: flex; align-items: center; gap: 8px;">
+                    <span
+                        style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #E8002D;"></span>
+                    PITWALL
+                </div>
+                <div style="height: 18px; width: 1px; background: rgba(255,255,255,0.15);"></div>
+                <div id="session-title" style="font-size: 13px; font-weight: 600; color: var(--text-secondary);">
+                    AWAITING SESSION LINK...
+                </div>
+                <button id="change-session-btn"
+                    style="background: rgba(255,255,255,0.1); border: 1px solid var(--border-subtle); color: #fff; padding: 4px 10px; border-radius: 4px; font-family: var(--font-sans); font-size: 10px; font-weight: 700; cursor: pointer; transition: background 0.2s; margin-left: 12px;">CHANGE
+                    SESSION</button>
+            </div>
+
+            <!-- Center: Live Race Control Ticker & Dropdown Log -->
+            <div id="rc-ticker"
+                style="position: relative; display: flex; align-items: center; gap: 10px; max-width: 520px;">
+                <button id="rc-dropdown-btn" title="View Recent FIA Messages"
+                    style="display: flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--text-secondary); border: 1px solid var(--border-subtle); cursor: pointer; transition: all 0.15s ease;">
+                    <span>FIA RC</span>
+                    <span style="font-size: 8px;">&darr;</span>
+                </button>
+                <span id="ticker-message"
+                    style="font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 420px;">
+                    SYSTEM READY &mdash; WAITING FOR STREAM
+                </span>
+
+                <!-- 5-Message Expanded Dropdown Panel -->
+                <div id="rc-dropdown-panel" class="collapsed"
+                    style="position: absolute; top: calc(100% + 8px); left: 0; width: 440px; background: var(--bg-panel-elevated); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border-focus); border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,0.5); padding: 12px; z-index: 100; display: flex; flex-direction: column; gap: 8px;">
+                    <div
+                        style="font-size: 11px; font-weight: 700; color: var(--text-muted); border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px; display: flex; justify-content: space-between;">
+                        <span>OFFICIAL FIA RACE CONTROL LOG</span>
+                        <span>LAST 5 MESSAGES</span>
+                    </div>
+                    <div id="rc-messages-list"
+                        style="display: flex; flex-direction: column; gap: 6px; font-family: var(--font-mono); font-size: 11px;">
+                        <!-- Dynamically populated by app.js -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Flag Status, Lap Counter & Race Clock -->
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div id="lap-counter" class="tabular-nums"
+                    style="font-family: var(--font-mono); font-weight: 700; font-size: 12px; padding: 4px 10px; border-radius: 4px; background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); border: 1px solid var(--border-subtle); letter-spacing: 0.5px;">
+                    LAP <span id="current-lap-num" style="color: #FFF; font-weight: 800;">--</span> <span style="color: var(--text-muted);">/</span> <span id="total-laps-num">--</span>
+                </div>
+                <div id="flag-indicator"
+                    style="font-family: var(--font-mono); font-weight: 800; font-size: 12px; padding: 4px 10px; border-radius: 4px; background: rgba(0, 229, 153, 0.15); color: #00E599; border: 1px solid rgba(0, 229, 153, 0.3);">
+                    TRACK CLEAR
+                </div>
+                <div id="race-clock" class="tabular-nums"
+                    style="font-size: 14px; font-weight: 700; color: var(--text-primary);">
+                    00:00:00
+                </div>
+            </div>
+        </header>
+
+        <!-- TIER 2: MAIN STAGE -->
+        <main id="main-stage">
+
+            <!-- Left: F1 Timing Tower (P1-P20) -->
+            <aside id="timing-tower">
+                <!-- Standings rows will be populated dynamically by timing_tower.js -->
+                <div
+                    style="padding: 12px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between;">
+                    <span>POS &bull; DRIVER</span>
+                    <span id="gap-mode-toggle"
+                        style="cursor: pointer; text-decoration: underline; text-underline-offset: 2px; color: var(--text-secondary); transition: color 0.15s ease;"
+                        title="Click to cycle metrics">GAP TO LEADER</span>
+                </div>
+                <div id="tower-rows" style="display: flex; flex-direction: column;">
+                    <!-- Placeholder row while loading -->
+                    <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 12px;">
+                        Loading Grid Standings...
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center/Right: 2D Track Map Container & Floating Cockpit Drawer -->
+            <section id="track-container">
+                <!-- HTML5 Canvas for Circuit Geometry & 20 Moving Car Dots -->
+                <canvas id="track-canvas"></canvas>
+
+                <!-- Floating Overlay Cockpit Drawer -->
+                <div id="cockpit-drawer">
+                    <div id="drawer-handle">
+                        <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;">
+                            <span>COCKPIT TELEMETRY</span>
+                            <span id="active-duel-label"
+                                style="color: var(--text-muted); font-size: 11px; font-weight: 500;">
+                                (CLICK DRIVERS ON TIMING TOWER TO COMPARE)
+                            </span>
+                        </div>
+                        <button id="drawer-toggle-btn"
+                            style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 11px; font-weight: 600;">
+                            COLLAPSE &darr;
+                        </button>
+                    </div>
+
+                    <div id="drawer-content">
+                        <!-- Left Driver Cockpit Card -->
+                        <div id="cockpit-driver-1" class="cockpit-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span id="d1-pill" class="team-pill"></span>
+                                    <img id="d1-headshot" class="cockpit-headshot" src="" alt="Driver" />
+                                    <span id="d1-tag" style="font-weight: 700; font-size: 16px;">--</span>
+                                    <span id="d1-num"
+                                        style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">#--</span>
+                                </div>
+                                <div id="d1-drs-badge"
+                                    style="font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 3px; background: rgba(155, 81, 224, 0.2); color: #C084FC;">
+                                    DRS OFF
+                                </div>
+                            </div>
+
+                            <!-- 15-LED Shift Light Bar -->
+                            <div id="d1-shift-lights" class="shift-light-bar">
+                                <!-- 15 LEDs generated dynamically -->
+                            </div>
+
+                            <!-- Primary Metrics: Big Gear & Digital Speed -->
+                            <div class="telemetry-primary">
+                                <div style="display: flex; align-items: baseline; gap: 6px;">
+                                    <div id="d1-gear" class="gear-badge">N</div>
+                                    <span class="speed-unit">GEAR</span>
+                                </div>
+                                <div style="text-align: right;">
+                                    <span id="d1-speed" class="speed-metric tabular-nums">0</span>
+                                    <span class="speed-unit">KM/H</span>
+                                </div>
+                            </div>
+
+                            <!-- Pedals: Throttle & Brake pressure gauges -->
+                            <div style="display: flex; flex-direction: column; gap: 6px;">
+                                <div class="pedal-bar-container">
+                                    <span style="width: 28px;">THR</span>
+                                    <div class="pedal-track">
+                                        <div id="d1-throttle-fill" class="pedal-fill throttle" style="width: 0%;"></div>
+                                    </div>
+                                    <span id="d1-throttle-val" class="tabular-nums"
+                                        style="width: 32px; text-align: right;">0%</span>
+                                </div>
+                                <div class="pedal-bar-container">
+                                    <span style="width: 28px;">BRK</span>
+                                    <div class="pedal-track">
+                                        <div id="d1-brake-fill" class="pedal-fill brake" style="width: 0%;"></div>
+                                    </div>
+                                    <span id="d1-brake-val" class="tabular-nums"
+                                        style="width: 32px; text-align: right;">0%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Driver Cockpit Card (Duel Mode) -->
+                        <div id="cockpit-driver-2" class="cockpit-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span id="d2-pill" class="team-pill"></span>
+                                    <img id="d2-headshot" class="cockpit-headshot" src="" alt="Driver" />
+                                    <span id="d2-tag" style="font-weight: 700; font-size: 16px;">--</span>
+                                    <span id="d2-num"
+                                        style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">#--</span>
+                                </div>
+                                <div id="d2-drs-badge"
+                                    style="font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 3px; background: rgba(155, 81, 224, 0.2); color: #C084FC;">
+                                    DRS OFF
+                                </div>
+                            </div>
+
+                            <!-- 15-LED Shift Light Bar -->
+                            <div id="d2-shift-lights" class="shift-light-bar">
+                                <!-- 15 LEDs generated dynamically -->
+                            </div>
+
+                            <!-- Primary Metrics: Big Gear & Digital Speed -->
+                            <div class="telemetry-primary">
+                                <div style="display: flex; align-items: baseline; gap: 6px;">
+                                    <div id="d2-gear" class="gear-badge">N</div>
+                                    <span class="speed-unit">GEAR</span>
+                                </div>
+                                <div style="text-align: right;">
+                                    <span id="d2-speed" class="speed-metric tabular-nums">0</span>
+                                    <span class="speed-unit">KM/H</span>
+                                </div>
+                            </div>
+
+                            <!-- Pedals: Throttle & Brake pressure gauges -->
+                            <div style="display: flex; flex-direction: column; gap: 6px;">
+                                <div class="pedal-bar-container">
+                                    <span style="width: 28px;">THR</span>
+                                    <div class="pedal-track">
+                                        <div id="d2-throttle-fill" class="pedal-fill throttle" style="width: 0%;"></div>
+                                    </div>
+                                    <span id="d2-throttle-val" class="tabular-nums"
+                                        style="width: 32px; text-align: right;">0%</span>
+                                </div>
+                                <div class="pedal-bar-container">
+                                    <span style="width: 28px;">BRK</span>
+                                    <div class="pedal-track">
+                                        <div id="d2-brake-fill" class="pedal-fill brake" style="width: 0%;"></div>
+                                    </div>
+                                    <span id="d2-brake-val" class="tabular-nums"
+                                        style="width: 32px; text-align: right;">0%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- TIER 3: BOTTOM PLAYBACK CONTROLS BAR -->
+        <footer id="playback-bar">
+            <!-- Play/Pause Button -->
+            <button id="play-pause-btn" class="play-btn" title="Toggle Play/Pause">
+                <svg id="play-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+            </button>
+
+            <!-- Scrubbing Timeline Slider -->
+            <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
+                <input id="scrubber" type="range" class="scrubber-slider" min="0" max="100" step="0.1" value="0">
+                <span id="scrubber-pct" class="tabular-nums"
+                    style="font-size: 12px; color: var(--text-secondary); width: 45px; text-align: right;">
+                    0.0%
+                </span>
+            </div>
+
+            <!-- Playback Speed Multipliers -->
+            <div class="speed-selector">
+                <div class="speed-opt" data-speed="0.5">0.5x</div>
+                <div class="speed-opt active" data-speed="1.0">1x</div>
+                <div class="speed-opt" data-speed="2.0">2x</div>
+                <div class="speed-opt" data-speed="5.0">5x</div>
+                <div class="speed-opt" data-speed="10.0">10x</div>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- Entry Script: Connects WebSocket and initializes controllers -->
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+
+</html>

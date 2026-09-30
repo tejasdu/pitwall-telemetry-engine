@@ -1,5 +1,7 @@
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
+
 
 class Laps(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -20,4 +22,3 @@ class Laps(BaseModel):
     segments_sector_1: list[int | None] | None = None
     segments_sector_2: list[int | None] | None = None
     segments_sector_3: list[int | None] | None = None
-    

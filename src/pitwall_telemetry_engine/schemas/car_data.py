@@ -1,5 +1,7 @@
 from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
+
 
 class CarData(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -14,9 +16,3 @@ class CarData(BaseModel):
     rpm: int
     speed: int
     throttle: int
-
-
-
-
-
-    
