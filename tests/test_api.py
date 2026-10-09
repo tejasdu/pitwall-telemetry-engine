@@ -33,4 +33,3 @@ def test_api_health_endpoint():
     assert data["status"] == "healthy"
     assert data["service"] == "pitwall-telemetry-engine"
     assert "version" in data
-

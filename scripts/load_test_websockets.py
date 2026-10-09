@@ -33,7 +33,9 @@ from dataclasses import dataclass, field
 try:
     import websockets
 except ImportError:
-    print("❌ Error: 'websockets' package is required. Install via 'uv sync' or 'pip install websockets'.")
+    print(
+        "❌ Error: 'websockets' package is required. Install via 'uv sync' or 'pip install websockets'."
+    )
     sys.exit(1)
 
 
@@ -84,7 +86,9 @@ async def simulate_client(
                 metrics.frames_received += 1
                 last_frame_time = now
             except asyncio.TimeoutError:
-                metrics.errors.append(f"Initial frame timeout (server took >{init_timeout:.0f}s to load session)")
+                metrics.errors.append(
+                    f"Initial frame timeout (server took >{init_timeout:.0f}s to load session)"
+                )
                 return
 
             # 2. Benchmark sustained stream over the requested duration
@@ -183,7 +187,9 @@ async def run_load_test(
     print(f"  Streaming Time   : {duration:.1f} seconds (per client after warmup)")
     print(f"  Warmup Timeout   : {init_timeout:.1f} seconds (allow server to load)")
     print(f"  Ramp-up Time     : {ramp_up:.2f} seconds")
-    print(f"  Chaos Mode       : {'ON (random seek/speed)' if chaos_mode else 'OFF (passive playback)'}")
+    print(
+        f"  Chaos Mode       : {'ON (random seek/speed)' if chaos_mode else 'OFF (passive playback)'}"
+    )
     print("-" * 80)
     print("🚀 Spawning client connections...")
 
@@ -259,7 +265,9 @@ def print_report(metrics: list[ClientMetrics], duration: float) -> int:
     print("\n📊 BENCHMARK RESULTS & METRICS SUMMARY")
     print("=" * 80)
     print(f"  Connections Attempted    : {total_clients}")
-    print(f"  Successful Connections   : {connected_clients} ({connected_clients/total_clients*100:.1f}%)")
+    print(
+        f"  Successful Connections   : {connected_clients} ({connected_clients / total_clients * 100:.1f}%)"
+    )
     print(f"  Clean Sessions Completed : {clean_exits} / {total_clients}")
     print(f"  Total Telemetry Frames   : {total_frames:,}")
     print(f"  Interactive Actions Sent : {total_actions}")
@@ -267,9 +275,13 @@ def print_report(metrics: list[ClientMetrics], duration: float) -> int:
 
     print("\n⏱️  LATENCY & INITIALIZATION TIMING (ms):")
     if handshakes:
-        print(f"  Handshake Latency (avg)  : {statistics.mean(handshakes):.1f} ms  (max: {max(handshakes):.1f} ms)")
+        print(
+            f"  Handshake Latency (avg)  : {statistics.mean(handshakes):.1f} ms  (max: {max(handshakes):.1f} ms)"
+        )
     if ttffs:
-        print(f"  Time to First Frame (TTFF): {statistics.mean(ttffs):.1f} ms  (min: {min(ttffs):.1f} ms, max: {max(ttffs):.1f} ms)")
+        print(
+            f"  Time to First Frame (TTFF): {statistics.mean(ttffs):.1f} ms  (min: {min(ttffs):.1f} ms, max: {max(ttffs):.1f} ms)"
+        )
         print("    ↳ Note: High TTFF indicates disk I/O bottlenecks in TimelineReplayer.__init__")
 
     print("\n🏎️  STREAM DELIVERY & STABILITY:")
@@ -281,11 +293,15 @@ def print_report(metrics: list[ClientMetrics], duration: float) -> int:
     if all_intervals:
         avg_interval = statistics.mean(all_intervals)
         p95_interval = (
-            statistics.quantiles(all_intervals, n=20)[18] if len(all_intervals) >= 20 else max(all_intervals)
+            statistics.quantiles(all_intervals, n=20)[18]
+            if len(all_intervals) >= 20
+            else max(all_intervals)
         )
         print(f"  Mean Frame Interval      : {avg_interval:.1f} ms (target ~33.3 ms for 30 FPS)")
         print(f"  p95 Frame Interval       : {p95_interval:.1f} ms")
-        print(f"  Stalls (>100ms jitter)   : {stalls} ({(stalls / len(all_intervals) * 100) if all_intervals else 0:.2f}% of frames)")
+        print(
+            f"  Stalls (>100ms jitter)   : {stalls} ({(stalls / len(all_intervals) * 100) if all_intervals else 0:.2f}% of frames)"
+        )
 
     # Print error breakdown if any
     if total_errors > 0:
@@ -299,12 +315,18 @@ def print_report(metrics: list[ClientMetrics], duration: float) -> int:
 
     # Verdict
     print("\n" + "=" * 80)
-    passed = clean_exits == total_clients and total_errors == 0 and (client_fps and statistics.mean(client_fps) >= 20.0)
+    passed = (
+        clean_exits == total_clients
+        and total_errors == 0
+        and (client_fps and statistics.mean(client_fps) >= 20.0)
+    )
     if passed:
         print("🟢 VERDICT: PASS - Engine sustained target concurrency with zero dropped sessions.")
         return 0
     elif connected_clients > 0:
-        print("🟡 VERDICT: DEGRADED - Connections survived but latency, jitter, or errors were observed.")
+        print(
+            "🟡 VERDICT: DEGRADED - Connections survived but latency, jitter, or errors were observed."
+        )
         return 1
     else:
         print("🔴 VERDICT: FAIL - Failed to establish connections or crashed under load.")
