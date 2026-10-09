@@ -24,7 +24,7 @@ DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 CACHE_DIR = Path(__file__).parent.parent.parent.parent / ".cache" / "sessions"
 
 
-_file_locks = {}
+_file_locks: dict[str, threading.Lock] = {}
 _file_locks_lock = threading.Lock()
 
 
@@ -70,8 +70,11 @@ def _fetch_or_cache(
                 continue
             break
 
+    data: list | dict
     # OpenF1 returns 404; no records
-    if response.status_code == 404:
+    if response is None:
+        data = []
+    elif response.status_code == 404:
         data = []
     else:
         response.raise_for_status()
@@ -321,7 +324,10 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
             valid_laps = [lap for lap in laps if lap.lap_duration and lap.lap_duration > 60]
 
         if valid_laps:
-            best_lap = min(valid_laps, key=lambda lap: lap.lap_duration)
+            best_lap = min(
+                valid_laps,
+                key=lambda lap: lap.lap_duration if lap.lap_duration is not None else float("inf"),
+            )
             if best_lap.duration_sector_1 and best_lap.duration_sector_2 and best_lap.lap_duration:
                 s1_ratio = best_lap.duration_sector_1 / best_lap.lap_duration
                 s2_ratio = (

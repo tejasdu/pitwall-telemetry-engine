@@ -20,7 +20,9 @@ from pitwall_telemetry_engine.metrics.inferences import (
 )
 from pitwall_telemetry_engine.schemas.car_data import CarData
 from pitwall_telemetry_engine.schemas.driver import Driver
+from pitwall_telemetry_engine.schemas.laps import Laps
 from pitwall_telemetry_engine.schemas.location import Location
+from pitwall_telemetry_engine.schemas.pit import Pit
 
 
 class DriverTimeline:
@@ -161,13 +163,13 @@ class TimelineReplayer:
         self.race_control = sorted(get_race_control(session_key), key=lambda m: m.date)
         self.rc_times = [m.date.timestamp() for m in self.race_control]
 
-        self.pits_by_driver = {}
+        self.pits_by_driver: dict[int, list[Pit]] = {}
         for p in get_pit(session_key):
             if p.driver_number not in self.pits_by_driver:
                 self.pits_by_driver[p.driver_number] = []
             self.pits_by_driver[p.driver_number].append(p)
 
-        self.laps_by_driver = {}
+        self.laps_by_driver: dict[int, list[Laps]] = {}
         all_laps = get_laps(session_key)
         for lap in all_laps:
             if lap.driver_number not in self.laps_by_driver:
@@ -175,16 +177,18 @@ class TimelineReplayer:
             if lap.lap_duration and lap.date_start:
                 self.laps_by_driver[lap.driver_number].append(lap)
         for d in self.laps_by_driver:
-            self.laps_by_driver[d].sort(key=lambda x: x.date_start)
+            self.laps_by_driver[d].sort(
+                key=lambda x: x.date_start.timestamp() if x.date_start else 0.0
+            )
 
         self.total_laps = max(
             (lap.lap_number for lap in all_laps if lap.lap_number is not None), default=0
         )
 
-        self.starting_positions = {}
-        for p in sorted(get_position(session_key), key=lambda x: x.date):
-            if p.driver_number not in self.starting_positions:
-                self.starting_positions[p.driver_number] = p.position
+        self.starting_positions: dict[int, int | None] = {}
+        for pos in sorted(get_position(session_key), key=lambda x: x.date):
+            if pos.driver_number not in self.starting_positions:
+                self.starting_positions[pos.driver_number] = pos.position
 
         # Cache previous ticks per driver to compute deceleration gradients
         self._prev_ticks: dict[int, CarData] = {}
@@ -357,13 +361,17 @@ class TimelineReplayer:
                 start_search = max(0, idx - 1000)
                 drivers_found = set()
                 for i in range(idx, start_search - 1, -1):
-                    rec = self.intervals[i]
-                    if rec.driver_number not in drivers_found:
-                        drivers_found.add(rec.driver_number)
-                        if rec.driver_number not in latest_by_driver:
-                            latest_by_driver[rec.driver_number] = {}
-                        latest_by_driver[rec.driver_number]["interval"] = rec.interval
-                        latest_by_driver[rec.driver_number]["gap_to_leader"] = rec.gap_to_leader
+                    interval_rec = self.intervals[i]
+                    if interval_rec.driver_number not in drivers_found:
+                        drivers_found.add(interval_rec.driver_number)
+                        if interval_rec.driver_number not in latest_by_driver:
+                            latest_by_driver[interval_rec.driver_number] = {}
+                        latest_by_driver[interval_rec.driver_number]["interval"] = (
+                            interval_rec.interval
+                        )
+                        latest_by_driver[interval_rec.driver_number]["gap_to_leader"] = (
+                            interval_rec.gap_to_leader
+                        )
                     if len(drivers_found) >= len(self.drivers):
                         break
 
@@ -435,9 +443,9 @@ class TimelineReplayer:
         # 2. Cockpit Drawer: Deep high-frequency telemetry for active 1-3 drivers
         telemetry = {}
         for d_num in target_drivers:
-            tl = self.timelines.get(d_num)
-            if tl:
-                tick = tl.get_telemetry_at(self.t_sim)
+            driver_tl = self.timelines.get(d_num)
+            if driver_tl:
+                tick = driver_tl.get_telemetry_at(self.t_sim)
                 if tick:
                     telemetry[str(d_num)] = {
                         "speed": tick.speed,
@@ -472,18 +480,22 @@ class TimelineReplayer:
                         in_pit = True
 
             is_dnf = False
-            tl = self.timelines.get(d_num)
+            car_tl = self.timelines.get(d_num)
             if not in_pit and flag not in ("RED", "SC", "CHEQUERED"):
-                if tl:
-                    last_tel = tl.tel_times[-1] if tl.tel_times else 0
-                    last_loc = tl.loc_times[-1] if tl.loc_times else 0
+                if car_tl:
+                    last_tel = car_tl.tel_times[-1] if car_tl.tel_times else 0
+                    last_loc = car_tl.loc_times[-1] if car_tl.loc_times else 0
                     last_update = max(last_tel, last_loc)
                     if last_update > 0 and self.t_sim - last_update > 120:
                         is_dnf = True
 
             last_lap = None
             for lap in self.laps_by_driver.get(d_num, []):
-                if lap.date_start.timestamp() + lap.lap_duration <= self.t_sim:
+                if (
+                    lap.date_start is not None
+                    and lap.lap_duration is not None
+                    and lap.date_start.timestamp() + lap.lap_duration <= self.t_sim
+                ):
                     last_lap = lap.lap_duration
                 else:
                     break

@@ -27,6 +27,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.16.8",
 ]
@@ -38,4 +39,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = true
 
