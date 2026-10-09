@@ -36,6 +36,15 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "pitwall-telemetry-engine",
+        "version": "0.2.0",
+    }
+
+
 @app.get("/")
 def root():
     index_file = STATIC_DIR / "index.html"

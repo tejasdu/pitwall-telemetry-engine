@@ -14,4 +14,7 @@ report.txt
 # Virtual environments
 .venv
 
+# Large local raw data dumps
+driver_data.json
+
 

@@ -13,6 +13,15 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
 router = APIRouter(prefix="/api")
 
 
+@router.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "pitwall-telemetry-engine",
+        "version": "0.2.0",
+    }
+
+
 @router.get("/sessions")
 def sessions(year: int | None = None):
     return get_sessions(year=year, session_name="Race")
