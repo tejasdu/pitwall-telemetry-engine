@@ -1,8 +1,11 @@
 import asyncio
+import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer
+from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer, session_cache
+
+logger = logging.getLogger(__name__)
 
 
 class ClientSession:
@@ -28,9 +31,10 @@ class ConnectionManager:
 
         key = int(session_key) if str(session_key).isdigit() else session_key
         try:
-            replayer = await asyncio.to_thread(TimelineReplayer, key, 30)
+            dataset = await session_cache.get(key)
+            replayer = TimelineReplayer(dataset, fps=30)
         except Exception as e:
-            print(f"Error initializing TimelineReplayer for session {key}: {e}")
+            logger.error("Error initializing session %s: %s", key, e)
             try:
                 await websocket.send_json(
                     {
@@ -65,7 +69,7 @@ class ConnectionManager:
         except (WebSocketDisconnect, asyncio.CancelledError):
             pass
         except Exception as e:
-            print(f"Stream Error: {e}")
+            logger.error("Stream Error for session %s: %s", session.session_key, e)
 
     async def handle_client_message(self, websocket: WebSocket, data: dict):
         session = self.sessions.get(websocket)
@@ -103,6 +107,17 @@ class ConnectionManager:
             # Drivers to show in cockpit drawer (e.g. [1, 55])
             if "drivers" in data and isinstance(data["drivers"], list):
                 session.selected_drivers = [int(d) for d in data["drivers"]]
+
+        elif action == "switch_session":
+            new_key = data.get("session_key")
+            if new_key:
+                try:
+                    dataset = await session_cache.get(new_key)
+                    session.replayer = TimelineReplayer(dataset, fps=session.replayer.fps)
+                    session.session_key = new_key
+                    logger.info("Session switched to %s for client", new_key)
+                except Exception as e:
+                    logger.error("Failed to switch session to %s: %s", new_key, e)
 
 
 manager = ConnectionManager()

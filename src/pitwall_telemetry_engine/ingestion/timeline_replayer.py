@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 from bisect import bisect_right
 from datetime import datetime, timezone
@@ -23,6 +24,8 @@ from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.laps import Laps
 from pitwall_telemetry_engine.schemas.location import Location
 from pitwall_telemetry_engine.schemas.pit import Pit
+
+logger = logging.getLogger(__name__)
 
 
 class DriverTimeline:
@@ -96,49 +99,41 @@ class DriverTimeline:
         return self.telemetry[idx]
 
 
-class TimelineReplayer:
-    """
-    Master simulation engine for Pitwall v2.
-    Synchronizes 20-driver coordinates, active drawer telemetry, timing intervals,
-    and FIA race flags under a unified simulation clock (T_sim) running at 30-60 Hz.
-    """
+class SessionDataset:
+    """Immutable, shared in-memory dataset for a Grand Prix session."""
 
-    def __init__(self, session_key: str | int = "latest", fps: int = 30):
-        self.session_key = session_key
-        self.fps = fps
-        self.frame_interval = 1.0 / fps
+    def __init__(self, session_key: str | int = "latest"):
+        self.session_key = int(session_key) if str(session_key).isdigit() else session_key
 
         # 1. Load session metadata and Driver Registry
-        self.session = get_session(session_key)
-        self.drivers: dict[int, Driver] = get_drivers(session_key)
+        self.session = get_session(self.session_key)
+        self.drivers: dict[int, Driver] = get_drivers(self.session_key)
 
         if not self.drivers:
-            raise ValueError(f"No driver or telemetry records found for session {session_key}")
+            raise ValueError(f"No driver or telemetry records found for session {self.session_key}")
 
         if not self.session.date_start or not self.session.date_end:
-            raise ValueError(f"Session {session_key} does not have valid start and end timestamps")
+            raise ValueError(
+                f"Session {self.session_key} does not have valid start and end timestamps"
+            )
 
         # 2. Set simulation time boundaries (Unix epoch seconds)
         self.start_time = self.session.date_start.timestamp()
         self.end_time = self.session.date_end.timestamp()
         if self.end_time <= self.start_time:
-            raise ValueError(f"Session {session_key} duration is invalid (end <= start)")
-        self.t_sim = self.start_time
+            raise ValueError(f"Session {self.session_key} duration is invalid (end <= start)")
 
-        # 3. Playback control state
-        self.is_playing = False
-        self.playback_speed = (
-            1.0  # 1x, 2x, 5x, 10x TO CHANGE; SHOULD LET USER CONTROL (FOR MODE A: Session Replay)
+        logger.info(
+            "Loading 20-driver grid for %s (%s)...",
+            self.session.circuit_short_name,
+            self.session.year,
         )
 
-        # 4. Load timelines for all 20 drivers
-        print(
-            f"🏎️  Loading 20-driver grid for {self.session.circuit_short_name} ({self.session.year})..."
-        )
+        # 3. Load timelines for all 20 drivers
         self.timelines: dict[int, DriverTimeline] = {}
         for d_num in self.drivers.keys():
-            locs = get_location(session_key, driver_number=d_num)
-            tel = get_car_data(session_key, driver_number=d_num)
+            locs = get_location(self.session_key, driver_number=d_num)
+            tel = get_car_data(self.session_key, driver_number=d_num)
             self.timelines[d_num] = DriverTimeline(
                 driver_number=d_num,
                 locations=locs,
@@ -151,26 +146,28 @@ class TimelineReplayer:
             len(tl.telemetry) > 0 or len(tl.loc_times) > 0 for tl in self.timelines.values()
         )
         if not has_any_data:
-            raise ValueError(f"No telemetry or GPS coordinates recorded for session {session_key}")
+            raise ValueError(
+                f"No telemetry or GPS coordinates recorded for session {self.session_key}"
+            )
 
-        # 5. Load and index macro intervals, positions & race control events
-        self.intervals = sorted(get_intervals(session_key), key=lambda i: i.date)
+        # 4. Load and index macro intervals, positions & race control events
+        self.intervals = sorted(get_intervals(self.session_key), key=lambda i: i.date)
         self.interval_times = [i.date.timestamp() for i in self.intervals]
 
-        self.positions = sorted(get_position(session_key), key=lambda p: p.date)
+        self.positions = sorted(get_position(self.session_key), key=lambda p: p.date)
         self.position_times = [p.date.timestamp() for p in self.positions]
 
-        self.race_control = sorted(get_race_control(session_key), key=lambda m: m.date)
+        self.race_control = sorted(get_race_control(self.session_key), key=lambda m: m.date)
         self.rc_times = [m.date.timestamp() for m in self.race_control]
 
         self.pits_by_driver: dict[int, list[Pit]] = {}
-        for p in get_pit(session_key):
+        for p in get_pit(self.session_key):
             if p.driver_number not in self.pits_by_driver:
                 self.pits_by_driver[p.driver_number] = []
             self.pits_by_driver[p.driver_number].append(p)
 
         self.laps_by_driver: dict[int, list[Laps]] = {}
-        all_laps = get_laps(session_key)
+        all_laps = get_laps(self.session_key)
         for lap in all_laps:
             if lap.driver_number not in self.laps_by_driver:
                 self.laps_by_driver[lap.driver_number] = []
@@ -186,9 +183,116 @@ class TimelineReplayer:
         )
 
         self.starting_positions: dict[int, int | None] = {}
-        for pos in sorted(get_position(session_key), key=lambda x: x.date):
+        for pos in sorted(get_position(self.session_key), key=lambda x: x.date):
             if pos.driver_number not in self.starting_positions:
                 self.starting_positions[pos.driver_number] = pos.position
+
+
+class SessionCache:
+    """Thread-safe LRU in-memory cache for SessionDataset instances."""
+
+    def __init__(self, max_sessions: int = 5):
+        self.max_sessions = max_sessions
+        self._cache: dict[int | str, SessionDataset] = {}
+        self._access_order: list[int | str] = []
+        self._lock = asyncio.Lock()
+
+    def get_sync(self, session_key: str | int = "latest") -> SessionDataset:
+        """Synchronously get or load a session dataset."""
+        key: int | str = int(session_key) if str(session_key).isdigit() else session_key
+        if key in self._cache:
+            if key in self._access_order:
+                self._access_order.remove(key)
+            self._access_order.append(key)
+            return self._cache[key]
+
+        dataset = SessionDataset(key)
+        self._cache[key] = dataset
+        self._access_order.append(key)
+        self._evict_if_needed()
+        return dataset
+
+    async def get(self, session_key: str | int = "latest") -> SessionDataset:
+        """Asynchronously get or load a session dataset with stampede protection."""
+        key: int | str = int(session_key) if str(session_key).isdigit() else session_key
+
+        # Fast path: already in memory (no lock needed for reading cached item)
+        if key in self._cache:
+            async with self._lock:
+                if key in self._access_order:
+                    self._access_order.remove(key)
+                self._access_order.append(key)
+            return self._cache[key]
+
+        # Slow path: acquire lock so only ONE thread loads from disk
+        async with self._lock:
+            # Double-checked locking
+            if key in self._cache:
+                if key in self._access_order:
+                    self._access_order.remove(key)
+                self._access_order.append(key)
+                return self._cache[key]
+
+            dataset = await asyncio.to_thread(SessionDataset, key)
+            self._cache[key] = dataset
+            self._access_order.append(key)
+            self._evict_if_needed()
+            return dataset
+
+    def _evict_if_needed(self) -> None:
+        while len(self._cache) > self.max_sessions and self._access_order:
+            oldest_key = self._access_order.pop(0)
+            self._cache.pop(oldest_key, None)
+            logger.info("Evicted session %s from in-memory cache", oldest_key)
+
+
+# Global singleton cache instance
+session_cache = SessionCache(max_sessions=5)
+
+
+class TimelineReplayer:
+    """
+    Master simulation engine for Pitwall v2.
+    Synchronizes 20-driver coordinates, active drawer telemetry, timing intervals,
+    and FIA race flags under a unified simulation clock (T_sim) running at 30-60 Hz.
+    Reuses shared SessionDataset for sub-millisecond per-client instantiation.
+    """
+
+    def __init__(
+        self,
+        dataset_or_key: SessionDataset | str | int = "latest",
+        fps: int = 30,
+    ):
+        if isinstance(dataset_or_key, SessionDataset):
+            self.dataset = dataset_or_key
+        else:
+            self.dataset = session_cache.get_sync(dataset_or_key)
+
+        self.session_key = self.dataset.session_key
+        self.fps = fps
+        self.frame_interval = 1.0 / fps
+
+        # Direct shortcuts to shared read-only session data
+        self.session = self.dataset.session
+        self.drivers = self.dataset.drivers
+        self.start_time = self.dataset.start_time
+        self.end_time = self.dataset.end_time
+        self.timelines = self.dataset.timelines
+        self.intervals = self.dataset.intervals
+        self.interval_times = self.dataset.interval_times
+        self.positions = self.dataset.positions
+        self.position_times = self.dataset.position_times
+        self.race_control = self.dataset.race_control
+        self.rc_times = self.dataset.rc_times
+        self.pits_by_driver = self.dataset.pits_by_driver
+        self.laps_by_driver = self.dataset.laps_by_driver
+        self.total_laps = self.dataset.total_laps
+        self.starting_positions = self.dataset.starting_positions
+
+        # Playback control state (isolated per client cursor)
+        self.t_sim = self.start_time
+        self.is_playing = False
+        self.playback_speed = 1.0
 
         # Cache previous ticks per driver to compute deceleration gradients
         self._prev_ticks: dict[int, CarData] = {}
@@ -568,6 +672,9 @@ class TimelineReplayer:
 
     def step(self, dt: float | None = None, selected_drivers: list[int] | None = None) -> dict:
         """Advances the simulation clock by one frame interval & returns new frame"""
+        if isinstance(dt, list):
+            selected_drivers = dt
+            dt = None
         step_dt = (dt if dt is not None else self.frame_interval) * self.playback_speed
         self.t_sim = min(self.end_time, self.t_sim + step_dt)
 
