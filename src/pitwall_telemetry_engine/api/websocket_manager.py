@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
 from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer, session_cache
@@ -35,24 +36,34 @@ class ConnectionManager:
             replayer = TimelineReplayer(dataset, fps=30)
         except Exception as e:
             logger.error("Error initializing session %s: %s", key, e)
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                message = "OpenF1 is rate limiting downloads. Try later or pick a cached race."
+            elif isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+                message = "OpenF1 denied access to this replay data. Try a cached race."
+            elif isinstance(e, httpx.HTTPError):
+                message = "Couldn't download replay data from OpenF1. Try again later."
+            elif isinstance(e, OSError):
+                message = "Couldn't read or write the server's replay cache. Check the server logs."
+            else:
+                message = "Replay data is unavailable for this race. Try again or pick another."
             try:
                 await websocket.send_json(
                     {
                         "error": True,
                         "type": "error",
-                        "message": f"Telemetry unavailable for session {key}: {str(e)}",
+                        "message": message,
                     }
                 )
-                await asyncio.sleep(0.1)
                 await websocket.close(code=4004, reason="Session unavailable")
             except Exception:
                 pass
-            return
+            return False
 
         session = ClientSession(websocket, replayer, key)
         self.sessions[websocket] = session
 
         session.stream_task = asyncio.create_task(self._stream_to_client(session))
+        return True
 
     async def disconnect(self, websocket: WebSocket):
         session = self.sessions.pop(websocket, None)
@@ -63,7 +74,8 @@ class ConnectionManager:
     async def _stream_to_client(self, session: ClientSession):
         try:
             async for frame in session.replayer.stream_frames(
-                get_selected_drivers_cb=lambda: session.selected_drivers
+                get_selected_drivers_cb=lambda: session.selected_drivers,
+                keep_alive_at_end=True,
             ):
                 await session.websocket.send_json(frame)
         except (WebSocketDisconnect, asyncio.CancelledError):
@@ -113,11 +125,18 @@ class ConnectionManager:
             if new_key:
                 try:
                     dataset = await session_cache.get(new_key)
-                    session.replayer = TimelineReplayer(dataset, fps=session.replayer.fps)
-                    session.session_key = new_key
-                    logger.info("Session switched to %s for client", new_key)
+                    replayer = TimelineReplayer(dataset, fps=session.replayer.fps)
                 except Exception as e:
                     logger.error("Failed to switch session to %s: %s", new_key, e)
+                    return
+
+                if session.stream_task:
+                    session.stream_task.cancel()
+                    await asyncio.gather(session.stream_task, return_exceptions=True)
+                session.replayer = replayer
+                session.session_key = replayer.session_key
+                session.stream_task = asyncio.create_task(self._stream_to_client(session))
+                logger.info("Session switched to %s for client", session.session_key)
 
 
 manager = ConnectionManager()

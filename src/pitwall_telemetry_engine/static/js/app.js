@@ -3,8 +3,8 @@
  * Manages WebSocket transport, state distribution, and HUD updates.
  */
 
-import { initTrackMap } from './track_map.js';
-import { initTimingTower } from './timing_tower.js';
+import { initTrackMap, resetTrackMap } from './track_map.js';
+import { initTimingTower, resetTimingTower } from './timing_tower.js';
 import { initCockpit } from './cockpit.js';
 
 export const state = {
@@ -24,6 +24,7 @@ export function resetApp() {
         reconnectTimer = null;
     }
     if (ws) {
+        ws.onopen = null;
         ws.onclose = null;
         ws.onerror = null;
         ws.onmessage = null;
@@ -33,11 +34,14 @@ export function resetApp() {
     state.latestFrame = null;
     state.selectedDrivers = [];
     state.isPlaying = false;
-    document.getElementById('session-title').innerText = 'AWAITING SESSION LINK...';
+    updateTicker('SYNCING TELEMETRY...');
+    updateRaceControlList([]);
     const currentLapEl = document.getElementById('current-lap-num');
     const totalLapsEl = document.getElementById('total-laps-num');
+    const clockEl = document.getElementById('race-clock');
     if (currentLapEl) currentLapEl.textContent = '--';
     if (totalLapsEl) totalLapsEl.textContent = '--';
+    if (clockEl) clockEl.textContent = '--:--:--';
 }
 
 let ws = null;
@@ -61,6 +65,26 @@ export function sendAction(data) {
     else { console.warn('[Pitwall] Cannot send action: WebSocket not connected', data); }
 }
 
+function showLaunchError(message) {
+    isIntentionalDisconnect = true;
+    const overlay = document.getElementById('mission-control-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+    const error = document.getElementById('mc-launch-error');
+    if (error) {
+        error.textContent = message;
+        error.hidden = false;
+    }
+    const launchBtn = document.getElementById('mc-launch-btn');
+    if (launchBtn) {
+        launchBtn.textContent = 'LAUNCH ENGINE';
+        launchBtn.disabled = false;
+    }
+    const yearSelect = document.getElementById('mc-year-select');
+    const sessionSelect = document.getElementById('mc-session-select');
+    if (yearSelect) yearSelect.disabled = false;
+    if (sessionSelect) sessionSelect.disabled = false;
+}
+
 // Connects to the FastAPI WebSocket streaming endpoint.
 function connectWebSocket() {
     isIntentionalDisconnect = false;
@@ -75,13 +99,8 @@ function connectWebSocket() {
     console.log(`[Pitwall] Connecting to live telemetry: ${wsUrl}`);
     ws = new WebSocket(wsUrl);
 
-    ws.onopen = async () => {
+    ws.onopen = () => {
         console.log('[Pitwall] Telemetry WebSocket connected.');
-        updateTicker('TELEMETRY STREAM CONNECTED &bull; LIVE FEED ACTIVE');
-
-        // Hide the overlay only after connection is successful
-        const overlay = document.getElementById('mission-control-overlay');
-        if (overlay) overlay.classList.add('hidden');
 
         // Sync initial driver selection if already populated
         if (state.selectedDrivers.length > 0) {
@@ -96,29 +115,14 @@ function connectWebSocket() {
             // Handle server-side telemetry availability error
             if (frame.error || frame.type === 'error') {
                 console.error('[Pitwall] Telemetry error:', frame.message);
-                isIntentionalDisconnect = true;
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = null;
-                }
-                updateTicker(`⚠️ ${frame.message.toUpperCase()}`);
-
-                // Re-open Mission Control so user can select another race
-                const overlay = document.getElementById('mission-control-overlay');
-                if (overlay) overlay.classList.remove('hidden');
-
-                const launchBtn = document.getElementById('mc-launch-btn');
-                if (launchBtn) {
-                    launchBtn.innerHTML = 'LAUNCH ENGINE';
-                    launchBtn.disabled = false;
-                }
-                const yearSelect = document.getElementById('mc-year-select');
-                const sessionSelect = document.getElementById('mc-session-select');
-                if (yearSelect) yearSelect.disabled = false;
-                if (sessionSelect) sessionSelect.disabled = false;
+                showLaunchError(frame.message || 'Replay data is unavailable for this race.');
                 return;
             }
 
+            if (!state.latestFrame) {
+                document.getElementById('mission-control-overlay')?.classList.add('hidden');
+                updateTicker('REPLAY CONNECTED');
+            }
             state.latestFrame = frame;
             state.isPlaying = frame.is_playing;
             state.playbackSpeed = frame.playback_speed;
@@ -141,28 +145,8 @@ function connectWebSocket() {
             return;
         }
 
-        // If the session has no telemetry recorded (server code 4004), abort reconnect loop
         if (event.code === 4004) {
-            console.warn('[Pitwall] Session unavailable (code 4004). Reconnect aborted.');
-            isIntentionalDisconnect = true;
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = null;
-            }
-            updateTicker('SESSION HAS NO TELEMETRY DATA &bull; PLEASE SELECT ANOTHER GRAND PRIX');
-
-            const overlay = document.getElementById('mission-control-overlay');
-            if (overlay) overlay.classList.remove('hidden');
-
-            const launchBtn = document.getElementById('mc-launch-btn');
-            if (launchBtn) {
-                launchBtn.innerHTML = 'LAUNCH ENGINE';
-                launchBtn.disabled = false;
-            }
-            const yearSelect = document.getElementById('mc-year-select');
-            const sessionSelect = document.getElementById('mc-session-select');
-            if (yearSelect) yearSelect.disabled = false;
-            if (sessionSelect) sessionSelect.disabled = false;
+            showLaunchError('Replay data is unavailable for this race.');
             return;
         }
 
@@ -201,7 +185,8 @@ function updateHeaderHUD(frame) {
     const flagEl = document.getElementById('flag-indicator');
     if (flagEl && frame.flag) {
         const flag = frame.flag.toUpperCase();
-        flagEl.textContent = flag === 'SC' ? 'SAFETY CAR' : (flag === 'GREEN' ? 'TRACK CLEAR' : flag);
+        const flagLabels = { SC: 'SAFETY CAR', VSC: 'VIRTUAL SAFETY CAR', GREEN: 'TRACK CLEAR' };
+        flagEl.textContent = flagLabels[flag] || flag;
 
         // Apply color styling based on flag state
         if (flag === 'GREEN') {
@@ -212,7 +197,7 @@ function updateHeaderHUD(frame) {
             flagEl.style.color = '#FFD000';
             flagEl.style.background = 'rgba(255, 208, 0, 0.15)';
             flagEl.style.borderColor = 'rgba(255, 208, 0, 0.4)';
-        } else if (flag === 'SC') {
+        } else if (flag === 'SC' || flag === 'VSC') {
             flagEl.style.color = '#FF8000';
             flagEl.style.background = 'rgba(255, 128, 0, 0.15)';
             flagEl.style.borderColor = 'rgba(255, 128, 0, 0.4)';
@@ -381,56 +366,57 @@ function initApp() {
     }
 }
 
+let sessionListRequest;
+
 async function loadSessionsForYear(year) {
     const sessionSelect = document.getElementById('mc-session-select');
     const launchBtn = document.getElementById('mc-launch-btn');
+    sessionListRequest?.abort();
+    const { signal } = (sessionListRequest = new AbortController());
 
     sessionSelect.disabled = true;
     sessionSelect.innerHTML = '<option>Fetching sessions...</option>';
     launchBtn.disabled = true;
 
     try {
-        const response = await fetch(`/api/sessions?year=${year}`);
-        let sessions = await response.json();
+        const response = await fetch(`/api/sessions?year=${year}`, { signal });
+        if (!response.ok) throw new Error(`Session list request failed (${response.status})`);
+        const sessions = await response.json();
+        if (signal.aborted) return;
 
-        // Filter out future races that have not started yet, cancelled races, and non-events
-        const now = new Date();
-        sessions = sessions.filter(s => {
-            if (new Date(s.date_start) > now) return false;
-            if (s.is_cancelled) return false;
-            // Imola 2023 was officially cancelled due to floods (no telemetry exists)
-            if (s.year === 2023 && (s.session_key === 9086 || s.circuit_short_name === 'Imola')) return false;
-            return true;
-        });
+        const now = Date.now();
+        const replaySessions = sessions.filter(s => !s.is_cancelled && Date.parse(s.date_end) <= now);
 
-        // Sort officially by FIA meeting_key rather than date_start to handle rescheduled races perfectly
-        sessions.sort((a, b) => a.meeting_key - b.meeting_key);
+        replaySessions.sort((a, b) => Date.parse(a.date_start) - Date.parse(b.date_start));
 
         sessionSelect.innerHTML = '';
-        if (sessions.length === 0) {
-            sessionSelect.innerHTML = '<option>No past sessions found for this year</option>';
+        if (replaySessions.length === 0) {
+            sessionSelect.innerHTML = '<option>No completed races found for this year</option>';
             return;
         }
 
-        sessions.forEach((s, index) => {
+        replaySessions.forEach(s => {
             const opt = document.createElement('option');
             opt.value = s.session_key;
 
             // Format time dynamically to the user's local timezone
             const localDate = new Date(s.date_start);
-            const timeStr = localDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+            const dateTime = localDate.toLocaleString([], {
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+            });
 
             // Use country_name + circuit_short_name to prevent "United States" or "Spain" duplicates
-            opt.textContent = `Round ${index + 1} - ${s.country_name} GP (${s.circuit_short_name}) - ${timeStr}`;
+            opt.textContent = `${s.country_name} GP (${s.circuit_short_name}) - ${dateTime}`;
             sessionSelect.appendChild(opt);
         });
 
         // Automatically pre-select the most recent race (bottom of the chronological list)
-        sessionSelect.selectedIndex = sessions.length - 1;
+        sessionSelect.selectedIndex = replaySessions.length - 1;
 
         sessionSelect.disabled = false;
         launchBtn.disabled = false;
     } catch (err) {
+        if (signal.aborted) return;
         console.error('Failed to load sessions', err);
         sessionSelect.innerHTML = '<option>API Error - Please retry</option>';
     }
@@ -475,14 +461,16 @@ function initMissionControl() {
     });
 
     // On Launch
-    launchBtn.addEventListener('click', async () => {
+    launchBtn.addEventListener('click', () => {
         state.sessionKey = sessionSelect.value;
         const selectedOpt = sessionSelect.options[sessionSelect.selectedIndex];
 
         // Update header title dynamically
         document.getElementById('session-title').innerText = selectedOpt.textContent.toUpperCase();
 
-        launchBtn.innerHTML = 'SYNCING TELEMETRY (THIS MAY TAKE 15 SECONDS)...';
+        const error = document.getElementById('mc-launch-error');
+        if (error) error.hidden = true;
+        launchBtn.textContent = 'LOADING REPLAY DATA...';
         launchBtn.disabled = true;
         yearSelect.disabled = true;
         sessionSelect.disabled = true;
@@ -493,14 +481,8 @@ function initMissionControl() {
         } else {
             resetApp();
 
-            // Hot-reload submodules without reloading the page
-            const trackMap = await import('./track_map.js');
-            trackMap.resetTrackMap();
-
-            const timingTower = await import('./timing_tower.js');
-            // Do not await this, it blocks the UI if OpenF1 API is slow!
-            timingTower.resetTimingTower();
-
+            resetTrackMap();
+            resetTimingTower();
             connectWebSocket();
         }
     });

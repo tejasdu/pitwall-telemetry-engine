@@ -64,7 +64,8 @@ def drivers(session_key: str | int = "latest", driver_number: int | None = None)
 
 @router.websocket("/ws/telemetry")
 async def telemetry_websocket(websocket: WebSocket, session_key: str | int = 9472):
-    await manager.connect(websocket, session_key=session_key)
+    if not await manager.connect(websocket, session_key=session_key):
+        return
     try:
         while True:
             data = await websocket.receive_json()

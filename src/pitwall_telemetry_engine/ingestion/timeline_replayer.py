@@ -4,6 +4,8 @@ import time
 from bisect import bisect_right
 from datetime import datetime, timezone
 
+import httpx
+
 from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_car_data,
     get_drivers,
@@ -14,6 +16,7 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_position,
     get_race_control,
     get_session,
+    get_stints,
 )
 from pitwall_telemetry_engine.metrics.inferences import (
     calculate_deceleration,
@@ -181,6 +184,30 @@ class SessionDataset:
         self.total_laps = max(
             (lap.lap_number for lap in all_laps if lap.lap_number is not None), default=0
         )
+        lap_starts = {
+            (lap.driver_number, lap.lap_number): lap.date_start.timestamp()
+            for lap in all_laps
+            if lap.date_start is not None
+        }
+        self.tyre_changes: dict[int, list[tuple[float, str | None]]] = {}
+        try:
+            stints = get_stints(self.session_key)
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.warning("Tyre stints unavailable for session %s: %s", self.session_key, exc)
+            stints = []
+        for stint in sorted(stints, key=lambda stint: stint.stint_number or 0):
+            if stint.lap_start == 1 or (stint.lap_start is None and stint.stint_number == 1):
+                start: float | None = self.start_time
+            elif stint.lap_start is not None:
+                start = lap_starts.get((stint.driver_number, stint.lap_start))
+            else:
+                continue
+            if start is not None:
+                self.tyre_changes.setdefault(stint.driver_number, []).append(
+                    (start, stint.compound)
+                )
+        for changes in self.tyre_changes.values():
+            changes.sort(key=lambda change: change[0])
 
         self.starting_positions: dict[int, int | None] = {}
         for pos in sorted(get_position(self.session_key), key=lambda x: x.date):
@@ -189,7 +216,7 @@ class SessionDataset:
 
 
 class SessionCache:
-    """Thread-safe LRU in-memory cache for SessionDataset instances."""
+    """In-memory LRU cache for SessionDataset instances."""
 
     def __init__(self, max_sessions: int = 5):
         self.max_sessions = max_sessions
@@ -197,14 +224,19 @@ class SessionCache:
         self._access_order: list[int | str] = []
         self._lock = asyncio.Lock()
 
+    def _get_cached(self, key: int | str) -> SessionDataset | None:
+        dataset = self._cache.get(key)
+        if dataset is not None:
+            self._access_order.remove(key)
+            self._access_order.append(key)
+        return dataset
+
     def get_sync(self, session_key: str | int = "latest") -> SessionDataset:
         """Synchronously get or load a session dataset."""
         key: int | str = int(session_key) if str(session_key).isdigit() else session_key
-        if key in self._cache:
-            if key in self._access_order:
-                self._access_order.remove(key)
-            self._access_order.append(key)
-            return self._cache[key]
+        dataset = self._get_cached(key)
+        if dataset is not None:
+            return dataset
 
         dataset = SessionDataset(key)
         self._cache[key] = dataset
@@ -216,22 +248,15 @@ class SessionCache:
         """Asynchronously get or load a session dataset with stampede protection."""
         key: int | str = int(session_key) if str(session_key).isdigit() else session_key
 
-        # Fast path: already in memory (no lock needed for reading cached item)
-        if key in self._cache:
-            async with self._lock:
-                if key in self._access_order:
-                    self._access_order.remove(key)
-                self._access_order.append(key)
-            return self._cache[key]
+        dataset = self._get_cached(key)
+        if dataset is not None:
+            return dataset
 
         # Slow path: acquire lock so only ONE thread loads from disk
         async with self._lock:
-            # Double-checked locking
-            if key in self._cache:
-                if key in self._access_order:
-                    self._access_order.remove(key)
-                self._access_order.append(key)
-                return self._cache[key]
+            dataset = self._get_cached(key)
+            if dataset is not None:
+                return dataset
 
             dataset = await asyncio.to_thread(SessionDataset, key)
             self._cache[key] = dataset
@@ -298,7 +323,9 @@ class TimelineReplayer:
         self._prev_ticks: dict[int, CarData] = {}
 
     def play(self) -> None:
-        """Starts or resumes race playback."""
+        """Resumes playback or restarts a finished replay."""
+        if self.t_sim >= self.end_time:
+            self.seek(self.start_time)
         self.is_playing = True
 
     def pause(self) -> None:
@@ -307,7 +334,10 @@ class TimelineReplayer:
 
     def toggle_play(self) -> bool:
         """Toggles between play and pause states."""
-        self.is_playing = not self.is_playing
+        if self.is_playing:
+            self.pause()
+        else:
+            self.play()
         return self.is_playing
 
     def set_speed(self, multiplier: float) -> None:
@@ -317,6 +347,8 @@ class TimelineReplayer:
     def seek(self, target_time_sec: float) -> None:
         """Jumps directly to a specific timestamp in the race."""
         self.t_sim = max(self.start_time, min(self.end_time, target_time_sec))
+        if self.t_sim >= self.end_time:
+            self.pause()
 
     def seek_percent(self, pct: float) -> None:
         """Jumps to a percentage through the race (0.0 to 1.0)."""
@@ -368,17 +400,17 @@ class TimelineReplayer:
             )
 
         # 2. Determine global track flag and yellow sectors
-        active_flag = "GREEN"
+        active_flag = None
         sector_status: dict[int, str] = {}
-        drs_enabled = True
-        drs_checked = False
+        track_cleared = False
+        drs_enabled = None
         driver_flags: dict[int, str] = {}
 
         # Scan backwards from current event
         for i in range(idx, -1, -1):
             msg = self.race_control[i]
             flag_val = (msg.flag or "").upper()
-            msg_text = (msg.message or "").upper()
+            msg_text = (msg.message or "").strip().upper()
             cat = (msg.category or "").upper()
 
             # Driver-specific flags (within last 30s of t_sim)
@@ -388,53 +420,47 @@ class TimelineReplayer:
                         driver_flags[msg.driver_number] = flag_val
 
             # Track global DRS state
-            if not drs_checked and cat == "DRS":
-                if "ENABLED" in msg_text:
-                    drs_enabled = True
-                    drs_checked = True
-                elif "DISABLED" in msg_text:
-                    drs_enabled = False
-                    drs_checked = True
+            if drs_enabled is None and cat == "DRS":
+                if msg_text in ("DRS ENABLED", "DRS DISABLED"):
+                    drs_enabled = msg_text == "DRS ENABLED"
 
-            # Track-wide session conclusion
-            if flag_val == "CHEQUERED" or "CHEQUERED FLAG" in msg_text:
-                active_flag = "CHEQUERED"
-                break
-
-            # Track-wide emergency red flag
-            if "RED FLAG" in msg_text or flag_val == "RED":
-                active_flag = "RED"
-                break
-
-            # Safety Car / Virtual Safety Car
-            if "SAFETY CAR" in msg_text or "VSC" in msg_text:
-                active_flag = "SC"
-                break
+            track_wide = (msg.scope or "").upper() == "TRACK"
+            clear = track_wide and (flag_val in ("CLEAR", "GREEN") or msg_text == "TRACK CLEAR")
+            if active_flag is None:
+                if flag_val == "CHEQUERED" or msg_text == "CHEQUERED FLAG":
+                    active_flag = "CHEQUERED"
+                elif flag_val == "RED" or msg_text.startswith("RED FLAG"):
+                    active_flag = "RED"
+                elif msg_text in ("VIRTUAL SAFETY CAR DEPLOYED", "VSC DEPLOYED"):
+                    active_flag = "VSC"
+                elif msg_text == "SAFETY CAR DEPLOYED":
+                    active_flag = "SC"
+                elif track_wide and flag_val in ("YELLOW", "DOUBLE YELLOW"):
+                    active_flag = "YELLOW"
+                elif clear:
+                    active_flag = "GREEN"
 
             # Sector yellow vs clear status resolution
-            if msg.sector is not None:
+            if not track_cleared and msg.sector is not None:
                 if msg.sector not in sector_status:
                     if flag_val in ("YELLOW", "DOUBLE YELLOW") or "YELLOW" in msg_text:
                         sector_status[msg.sector] = "YELLOW"
                     elif flag_val in ("CLEAR", "GREEN") or "CLEAR" in msg_text:
                         sector_status[msg.sector] = "CLEAR"
 
-            # Global track clear
-            if msg.scope == "Track" and (
-                flag_val in ("CLEAR", "GREEN") or "TRACK CLEAR" in msg_text
-            ):
-                if not any(status == "YELLOW" for status in sector_status.values()):
-                    active_flag = "GREEN"
+            track_cleared = track_cleared or clear
+            if track_cleared and active_flag is not None and drs_enabled is not None:
+                if self.t_sim - self.rc_times[i] > 30.0:
                     break
 
         yellow_sectors = sorted([s for s, status in sector_status.items() if status == "YELLOW"])
-        if active_flag not in ("RED", "SC", "CHEQUERED") and yellow_sectors:
-            active_flag = "YELLOW"
+        if active_flag in (None, "GREEN"):
+            active_flag = "YELLOW" if yellow_sectors else "GREEN"
 
         return {
             "flag": active_flag,
             "sectors": yellow_sectors,
-            "drs_enabled": drs_enabled,
+            "drs_enabled": drs_enabled if drs_enabled is not None else True,
             "messages": recent_messages,
             "driver_flags": driver_flags,
         }
@@ -486,7 +512,7 @@ class TimelineReplayer:
         Identifies active battles, DRS attack windows, and dive-bomb threats.
         """
         # DRS & overtaking is prohibited under a flag
-        if flag in ("YELLOW", "SC", "RED"):
+        if flag in ("YELLOW", "SC", "VSC", "RED"):
             return []
 
         battles = []
@@ -585,7 +611,7 @@ class TimelineReplayer:
 
             is_dnf = False
             car_tl = self.timelines.get(d_num)
-            if not in_pit and flag not in ("RED", "SC", "CHEQUERED"):
+            if not in_pit and flag not in ("RED", "SC", "VSC", "CHEQUERED"):
                 if car_tl:
                     last_tel = car_tl.tel_times[-1] if car_tl.tel_times else 0
                     last_loc = car_tl.loc_times[-1] if car_tl.loc_times else 0
@@ -613,6 +639,11 @@ class TimelineReplayer:
             intervals_map[d_num]["pit_count"] = pit_count
             intervals_map[d_num]["last_lap_time"] = last_lap
             intervals_map[d_num]["pos_change"] = pos_change
+            changes = self.dataset.tyre_changes.get(d_num, [])
+            stint_idx = bisect_right(changes, self.t_sim, key=lambda change: change[0]) - 1
+            intervals_map[d_num]["tyre_compound"] = (
+                changes[stint_idx][1] if stint_idx >= 0 else None
+            )
 
         # 5. Lap tracking & progress calculation
         current_lap = 1 if self.total_laps > 0 else 0
@@ -677,15 +708,17 @@ class TimelineReplayer:
             dt = None
         step_dt = (dt if dt is not None else self.frame_interval) * self.playback_speed
         self.t_sim = min(self.end_time, self.t_sim + step_dt)
+        if self.t_sim >= self.end_time:
+            self.pause()
 
         return self.assemble_frame(selected_drivers=selected_drivers)
 
-    async def stream_frames(self, get_selected_drivers_cb=None):
-        """Streams broadcast frames at the target FPS."""
+    async def stream_frames(self, get_selected_drivers_cb=None, *, keep_alive_at_end: bool = False):
+        """Streams frames at the target FPS, optionally waiting for controls after the finish."""
         self.is_playing = True
         frame_dt = self.frame_interval
 
-        while self.t_sim < self.end_time:
+        while keep_alive_at_end or self.t_sim < self.end_time:
             loop_start = time.perf_counter()
 
             selected = get_selected_drivers_cb() if callable(get_selected_drivers_cb) else None

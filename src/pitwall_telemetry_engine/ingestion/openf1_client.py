@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ from pitwall_telemetry_engine.schemas.stints import Stints
 BASE_URL = "https://api.openf1.org/v1"
 DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 CACHE_DIR = Path(__file__).parent.parent.parent.parent / ".cache" / "sessions"
+UNHELD_RACE_SESSION_KEYS = {9086, 11261, 11269}
 
 
 _file_locks: dict[str, threading.Lock] = {}
@@ -36,28 +38,36 @@ def _get_file_lock(file_path: Path) -> threading.Lock:
         return _file_locks[path_str]
 
 
+def _write_cache(path: Path, data: list | dict, indent: int | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    separators = (",", ":") if indent is None else None
+    try:
+        temp_path.write_text(
+            json.dumps(data, indent=indent, separators=separators), encoding="utf-8"
+        )
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 def _fetch_or_cache(
     cache_file_path: Path,
     url: str,
     schema_cls: type[BaseModel] | None = None,
     indent: int | None = None,
+    *,
+    force: bool = False,
+    require_records: bool = False,
 ) -> list[dict] | dict:
-    """Helper function: Lazy cacheing mechanism for OpenF1 API calls, saving straight to disk"""
+    """Read a cache entry or fetch and publish it under the per-file lock."""
+    if not force and cache_file_path.exists():
+        return json.loads(cache_file_path.read_text(encoding="utf-8"))
 
-    # 1. Quick cache hit check
-    if cache_file_path.exists():
-        raw_text = cache_file_path.read_text(encoding="utf-8")
-        return json.loads(raw_text)
+    with _get_file_lock(cache_file_path):
+        if not force and cache_file_path.exists():
+            return json.loads(cache_file_path.read_text(encoding="utf-8"))
 
-    # 2. Cache miss: Acquire thread lock to prevent thundering herd
-    file_lock = _get_file_lock(cache_file_path)
-    with file_lock:
-        # Double-check inside the lock in case another thread just finished caching it
-        if cache_file_path.exists():
-            raw_text = cache_file_path.read_text(encoding="utf-8")
-            return json.loads(raw_text)
-
-        # Still a cache miss: query OpenF1 API with retry on 429 rate limit
         response = None
         for attempt in range(4):
             response = httpx.get(url, timeout=DEFAULT_TIMEOUT)
@@ -70,30 +80,23 @@ def _fetch_or_cache(
                 continue
             break
 
-    data: list | dict
-    # OpenF1 returns 404; no records
-    if response is None:
-        data = []
-    elif response.status_code == 404:
-        data = []
-    else:
-        response.raise_for_status()
-        data = response.json()
+        if response is None or response.status_code == 404:
+            data = []
+        else:
+            response.raise_for_status()
+            data = response.json()
+        if not isinstance(data, (list, dict)):
+            raise ValueError(f"Unexpected OpenF1 response for {url}")
+        if require_records and (not isinstance(data, list) or not data):
+            raise ValueError(f"No calendar records returned for {url}")
 
-    # Filter records through Pydantic schema
-    if schema_cls is not None and isinstance(data, list):
-        data = [schema_cls(**item).model_dump(mode="json") for item in data]
-    elif schema_cls is not None and isinstance(data, dict):
-        data = schema_cls(**data).model_dump(mode="json")
+        if schema_cls is not None and isinstance(data, list):
+            data = [schema_cls(**item).model_dump(mode="json") for item in data]
+        elif schema_cls is not None and isinstance(data, dict):
+            data = schema_cls(**data).model_dump(mode="json")
 
-    # 3. Save to disk atomically (temp file -> atomic rename)
-    cache_file_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = cache_file_path.with_suffix(".tmp")
-    separators = (",", ":") if indent is None else None
-    temp_path.write_text(json.dumps(data, indent=indent, separators=separators), encoding="utf-8")
-    temp_path.replace(cache_file_path)
-
-    return data
+        _write_cache(cache_file_path, data, indent)
+        return data
 
 
 def _resolve_session_key(session_key: str | int = "latest") -> int:
@@ -103,14 +106,14 @@ def _resolve_session_key(session_key: str | int = "latest") -> int:
     return int(session_key)
 
 
-def get_drivers(session_key: str | int = "latest") -> dict[int, Driver]:
+def get_drivers(session_key: str | int = "latest", *, force: bool = False) -> dict[int, Driver]:
     """Fetches drivers for a session and returns a Driver Registry lookup dictionary"""
     resolved_key = _resolve_session_key(session_key)
 
     url = f"{BASE_URL}/drivers?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "drivers.json"
 
-    drivers = _fetch_or_cache(cache_path, url, schema_cls=Driver, indent=2)
+    drivers = _fetch_or_cache(cache_path, url, schema_cls=Driver, indent=2, force=force)
 
     driver_registry = {}
     for d in drivers:
@@ -120,14 +123,14 @@ def get_drivers(session_key: str | int = "latest") -> dict[int, Driver]:
     return driver_registry
 
 
-def get_session(session_key: str | int = "latest") -> Sessions:
+def get_session(session_key: str | int = "latest", *, force: bool = False) -> Sessions:
     """Fetches session metadata for a given session_key."""
     resolved_key = _resolve_session_key(session_key)
 
     url = f"{BASE_URL}/sessions?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "sessions.json"
 
-    sessions_data = _fetch_or_cache(cache_path, url, schema_cls=Sessions, indent=2)
+    sessions_data = _fetch_or_cache(cache_path, url, schema_cls=Sessions, indent=2, force=force)
 
     if not sessions_data:
         raise ValueError(f"No session found for key: {resolved_key}")
@@ -135,7 +138,9 @@ def get_session(session_key: str | int = "latest") -> Sessions:
     return Sessions(**sessions_data[0])
 
 
-def get_sessions(year: int | None = 2024, session_name: str | None = "Race") -> list[Sessions]:
+def get_sessions(
+    year: int | None = 2024, session_name: str | None = "Race", *, refresh: bool = False
+) -> list[Sessions]:
     """Fetches a list of Grand Prix sessions filtered by year and/or session name."""
     query_params = []
     if year is not None:
@@ -150,15 +155,23 @@ def get_sessions(year: int | None = 2024, session_name: str | None = "Race") -> 
     name_tag = session_name if session_name is not None else "all"
     cache_path = CACHE_DIR.parent / "calendar" / f"sessions_{year_tag}_{name_tag}.json"
 
-    data = _fetch_or_cache(cache_path, url, schema_cls=Sessions, indent=2)
+    data = _fetch_or_cache(
+        cache_path, url, schema_cls=Sessions, indent=2, force=refresh, require_records=refresh
+    )
     sessions = [Sessions(**s) for s in data]
+    if session_name == "Race":
+        sessions = [
+            session
+            for session in sessions
+            if not session.is_cancelled and session.session_key not in UNHELD_RACE_SESSION_KEYS
+        ]
 
     sessions.sort(key=lambda s: s.date_start, reverse=True)
     return sessions
 
 
 def get_car_data(
-    session_key: str | int = "latest", driver_number: int | None = None
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
 ) -> list[CarData]:
     """Fetches raw car telemetry ticks for a session for a specific driver."""
     if driver_number is None:
@@ -170,19 +183,19 @@ def get_car_data(
     url = f"{BASE_URL}/car_data?session_key={resolved_key}&driver_number={driver_number}"
     cache_path = CACHE_DIR / str(resolved_key) / "car_data" / f"{driver_number}.json"
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=CarData, indent=None)
+    records = _fetch_or_cache(cache_path, url, schema_cls=CarData, indent=None, force=force)
     return [CarData(**r) for r in records]
 
 
 def get_intervals(
-    session_key: str | int = "latest", driver_number: int | None = None
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
 ) -> list[Intervals]:
     """Fetches race interval & gap data for a session (optionally filtered by driver_number)."""
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "intervals.json"
 
     # Optimization: if full session intervals file exists, load and filter in Python
-    if full_cache_path.exists():
+    if not force and full_cache_path.exists():
         raw_text = full_cache_path.read_text(encoding="utf-8")
         records = json.loads(raw_text)
         if driver_number is not None:
@@ -196,18 +209,18 @@ def get_intervals(
         url = f"{BASE_URL}/intervals?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=Intervals, indent=None)
+    records = _fetch_or_cache(cache_path, url, schema_cls=Intervals, indent=None, force=force)
     return [Intervals(**r) for r in records]
 
 
 def get_position(
-    session_key: str | int = "latest", driver_number: int | None = None
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
 ) -> list[Position]:
     """Fetches official race position history for a session."""
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "position.json"
 
-    if full_cache_path.exists():
+    if not force and full_cache_path.exists():
         raw_text = full_cache_path.read_text(encoding="utf-8")
         records = json.loads(raw_text)
         if driver_number is not None:
@@ -221,16 +234,18 @@ def get_position(
         url = f"{BASE_URL}/position?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=Position, indent=None)
+    records = _fetch_or_cache(cache_path, url, schema_cls=Position, indent=None, force=force)
     return [Position(**r) for r in records]
 
 
-def get_pit(session_key: str | int = "latest", driver_number: int | None = None) -> list[Pit]:
+def get_pit(
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
+) -> list[Pit]:
     """Fetches official pit stop history for a session."""
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "pit.json"
 
-    if full_cache_path.exists():
+    if not force and full_cache_path.exists():
         raw_text = full_cache_path.read_text(encoding="utf-8")
         records = json.loads(raw_text)
         if driver_number is not None:
@@ -244,22 +259,24 @@ def get_pit(session_key: str | int = "latest", driver_number: int | None = None)
         url = f"{BASE_URL}/pit?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=Pit, indent=None)
+    records = _fetch_or_cache(cache_path, url, schema_cls=Pit, indent=None, force=force)
     return [Pit(**r) for r in records]
 
 
-def get_race_control(session_key: str | int = "latest") -> list[RaceControlMessage]:
+def get_race_control(
+    session_key: str | int = "latest", *, force: bool = False
+) -> list[RaceControlMessage]:
     """Fetches FIA Race Control messages and flag events for a session."""
     resolved_key = _resolve_session_key(session_key)
     url = f"{BASE_URL}/race_control?session_key={resolved_key}"
     cache_path = CACHE_DIR / str(resolved_key) / "race_control.json"
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=RaceControlMessage, indent=2)
+    records = _fetch_or_cache(cache_path, url, schema_cls=RaceControlMessage, indent=2, force=force)
     return [RaceControlMessage(**r) for r in records]
 
 
 def get_location(
-    session_key: str | int = "latest", driver_number: int | None = None
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
 ) -> list[Location]:
     """Fetches Cartesian GPS coordinates (X, Y, Z) for track positioning."""
     resolved_key = _resolve_session_key(session_key)
@@ -267,20 +284,22 @@ def get_location(
     if driver_number is not None:
         url = f"{BASE_URL}/location?session_key={resolved_key}&driver_number={driver_number}"
         cache_path = CACHE_DIR / str(resolved_key) / "location" / f"{driver_number}.json"
-        records = _fetch_or_cache(cache_path, url, schema_cls=Location, indent=None)
+        records = _fetch_or_cache(cache_path, url, schema_cls=Location, indent=None, force=force)
         return [Location(**r) for r in records]
 
     # Full field aggregation: fetch or read per driver, then merge and sort chronologically
     registry = get_drivers(resolved_key)
     all_locations: list[Location] = []
     for d_num in registry.keys():
-        all_locations.extend(get_location(resolved_key, driver_number=d_num))
+        all_locations.extend(get_location(resolved_key, driver_number=d_num, force=force))
 
     all_locations.sort(key=lambda loc: loc.date)
     return all_locations
 
 
-def get_track_geometry(session_key: str | int = "latest", sample_driver: int | None = None) -> dict:
+def get_track_geometry(
+    session_key: str | int = "latest", sample_driver: int | None = None, *, force: bool = False
+) -> dict:
     """
     Extracts clean circuit centerline geometry coordinates from a single GREEN flying lap of a driver,
     applying Catmull-Rom spline interpolation to get a smooth, closed racing track.
@@ -289,10 +308,18 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
     resolved_key = _resolve_session_key(session_key)
     cache_path = CACHE_DIR / str(resolved_key) / "track_geometry.json"
 
-    if cache_path.exists():
-        raw_text = cache_path.read_text(encoding="utf-8")
-        return json.loads(raw_text)
+    if not force and cache_path.exists():
+        return json.loads(cache_path.read_text(encoding="utf-8"))
 
+    with _get_file_lock(cache_path):
+        if not force and cache_path.exists():
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        geometry = _build_track_geometry(resolved_key, sample_driver)
+        _write_cache(cache_path, geometry, indent=2)
+        return geometry
+
+
+def _build_track_geometry(resolved_key: int, sample_driver: int | None) -> dict:
     # 1. Identify candidate drivers with clean laps
     registry = get_drivers(resolved_key)
     all_laps = get_laps(resolved_key)
@@ -355,15 +382,12 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
                 break
 
     if not lap_points:
-        fallback_geom = {
+        return {
             "points": [],
             "bounds": {"min_x": 0, "max_x": 1, "min_y": 0, "max_y": 1},
             "s1_ratio": 0.333,
             "s2_ratio": 0.666,
         }
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(fallback_geom, indent=2), encoding="utf-8")
-        return fallback_geom
 
     raw_pts = [{"x": float(p.x), "y": float(p.y)} for p in lap_points]
 
@@ -406,28 +430,23 @@ def get_track_geometry(session_key: str | int = "latest", sample_driver: int | N
         "max_y": float(max(ys)),
     }
 
-    geometry = {
+    return {
         "points": smoothed_pts,
         "bounds": bounds,
         "s1_ratio": s1_ratio,
         "s2_ratio": s2_ratio,
     }
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = cache_path.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(geometry, indent=2), encoding="utf-8")
-    temp_path.replace(cache_path)
 
-    return geometry
-
-
-def get_laps(session_key: str | int = "latest", driver_number: int | None = None) -> list[Laps]:
+def get_laps(
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
+) -> list[Laps]:
     """Fetches lap timings, sector durations, and speed trap figures for a session."""
 
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "laps.json"
 
-    if full_cache_path.exists():
+    if not force and full_cache_path.exists():
         raw_text = full_cache_path.read_text(encoding="utf-8")
         records = json.loads(raw_text)
         if driver_number is not None:
@@ -441,17 +460,19 @@ def get_laps(session_key: str | int = "latest", driver_number: int | None = None
         url = f"{BASE_URL}/laps?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=Laps, indent=None)
+    records = _fetch_or_cache(cache_path, url, schema_cls=Laps, indent=None, force=force)
     return [Laps(**r) for r in records]
 
 
-def get_stints(session_key: str | int = "latest", driver_number: int | None = None) -> list[Stints]:
+def get_stints(
+    session_key: str | int = "latest", driver_number: int | None = None, *, force: bool = False
+) -> list[Stints]:
     """Fetches tire stint records (compound, start/end lap, tire age) for a session."""
 
     resolved_key = _resolve_session_key(session_key)
     full_cache_path = CACHE_DIR / str(resolved_key) / "stints.json"
 
-    if full_cache_path.exists():
+    if not force and full_cache_path.exists():
         raw_text = full_cache_path.read_text(encoding="utf-8")
         records = json.loads(raw_text)
         if driver_number is not None:
@@ -465,7 +486,7 @@ def get_stints(session_key: str | int = "latest", driver_number: int | None = No
         url = f"{BASE_URL}/stints?session_key={resolved_key}"
         cache_path = full_cache_path
 
-    records = _fetch_or_cache(cache_path, url, schema_cls=Stints, indent=2)
+    records = _fetch_or_cache(cache_path, url, schema_cls=Stints, indent=2, force=force)
     return [Stints(**r) for r in records]
 
 

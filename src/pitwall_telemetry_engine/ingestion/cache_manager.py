@@ -5,10 +5,13 @@ for OpenF1 race session datasets on disk.
 """
 
 import argparse
+import json
 import shutil
 import sys
 import time
 from datetime import datetime, timezone
+
+import httpx
 
 from pitwall_telemetry_engine.ingestion.openf1_client import (
     CACHE_DIR,
@@ -64,27 +67,30 @@ def audit_session(session_key: str | int) -> dict:
 
     # Check drivers
     drivers_file = session_dir / "drivers.json"
-    driver_count = 0
+    driver_numbers: set[int] = set()
     if drivers_file.exists() and drivers_file.stat().st_size > 10:
         try:
-            import json
-
             data = json.loads(drivers_file.read_text(encoding="utf-8"))
-            driver_count = len(data) if isinstance(data, list) else len(data.keys())
-        except Exception:
-            driver_count = 0
+            if isinstance(data, list):
+                driver_numbers = {int(driver["driver_number"]) for driver in data}
+        except (OSError, ValueError, TypeError, KeyError):
+            missing.append("invalid drivers.json")
 
-    car_data_dir = session_dir / "car_data"
-    car_count = 0
-    if car_data_dir.exists() and car_data_dir.is_dir():
-        car_count = len(
-            [f for f in car_data_dir.iterdir() if f.is_file() and f.stat().st_size > 100]
-        )
+    feed_counts = {}
+    for feed in ("car_data", "location"):
+        count = 0
+        for driver_number in sorted(driver_numbers):
+            relative_path = f"{feed}/{driver_number}.json"
+            path = session_dir / relative_path
+            if not path.is_file() or path.stat().st_size < 2:
+                missing.append(relative_path)
+            elif path.stat().st_size > 100:
+                count += 1
+        feed_counts[feed] = count
 
-    loc_dir = session_dir / "location"
-    loc_count = 0
-    if loc_dir.exists() and loc_dir.is_dir():
-        loc_count = len([f for f in loc_dir.iterdir() if f.is_file() and f.stat().st_size > 100])
+    driver_count = len(driver_numbers)
+    car_count = feed_counts["car_data"]
+    loc_count = feed_counts["location"]
 
     is_complete = (
         len(missing) == 0
@@ -175,14 +181,14 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
     try:
         # 1. Metadata
         print("  • Fetching session metadata...")
-        session = get_session(key)
+        session = get_session(key, force=force)
         print(
             f"    🏁 Grand Prix: {session.country_name} ({session.circuit_short_name} {session.year})"
         )
 
         # 2. Drivers
         print("  • Fetching driver registry...")
-        drivers = get_drivers(key)
+        drivers = get_drivers(key, force=force)
         driver_numbers = sorted(list(drivers.keys()))
         print(f"    🏎️ Found {len(driver_numbers)} drivers: {driver_numbers}")
 
@@ -192,12 +198,12 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
 
         # 3. Macro timing feeds
         print("  • Ingesting timing intervals, race control flags, pits, and laps...")
-        get_intervals(key)
-        get_position(key)
-        get_race_control(key)
-        get_pit(key)
-        get_laps(key)
-        get_stints(key)
+        get_intervals(key, force=force)
+        get_position(key, force=force)
+        get_race_control(key, force=force)
+        get_pit(key, force=force)
+        get_laps(key, force=force)
+        get_stints(key, force=force)
 
         # 4. Driver Telemetry & GPS Coordinates (with gentle throttling to prevent 429s)
         print("  • Downloading high-frequency car telemetry & GPS locations...")
@@ -214,23 +220,23 @@ def prewarm_session(session_key: str | int, force: bool = False) -> bool:
             if need_car:
                 sys.stdout.write(f"    [{idx}/{len(driver_numbers)}] {tag} car_data... ")
                 sys.stdout.flush()
-                get_car_data(key, driver_number=d_num)
+                get_car_data(key, driver_number=d_num, force=force or car_path.exists())
                 print("done")
                 time.sleep(0.25)  # Polite sleep to respect OpenF1 rate limits
 
             if need_loc:
                 sys.stdout.write(f"    [{idx}/{len(driver_numbers)}] {tag} location... ")
                 sys.stdout.flush()
-                get_location(key, driver_number=d_num)
+                get_location(key, driver_number=d_num, force=force or loc_path.exists())
                 print("done")
                 time.sleep(0.25)
 
         # 5. Track Geometry (generates spline from cached locations)
         print("  • Generating Catmull-Rom track geometry spline...")
-        get_track_geometry(key)
+        get_track_geometry(key, force=force)
 
         elapsed = time.perf_counter() - start_time
-        print(f"✅ Session {key} successfully pre-warmed and verified in {elapsed:.1f}s!\n")
+        print(f"✅ Session {key} pre-warmed in {elapsed:.1f}s!\n")
         return True
 
     except Exception as e:
@@ -244,14 +250,7 @@ def prewarm_year(year: int, force: bool = False) -> None:
     all_sessions = get_sessions(year=year, session_name="Race")
 
     now = datetime.now(timezone.utc)
-    completed_sessions = [
-        s
-        for s in all_sessions
-        if s.date_start
-        and s.date_start <= now
-        and not getattr(s, "is_cancelled", False)
-        and not (s.year == 2023 and (s.session_key == 9086 or s.circuit_short_name == "Imola"))
-    ]
+    completed_sessions = [session for session in all_sessions if session.date_end <= now]
 
     # Sort oldest to newest
     completed_sessions.sort(key=lambda s: s.date_start)
@@ -272,6 +271,26 @@ def prewarm_all(force: bool = False) -> None:
         prewarm_year(y, force=force)
 
 
+def sync_current_season() -> bool:
+    """Refresh the race calendar and warm completed races missing from disk."""
+    now = datetime.now(timezone.utc)
+    try:
+        sessions = get_sessions(year=now.year, refresh=True)
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        print(f"Calendar refresh failed: {exc}", file=sys.stderr)
+        return False
+
+    success = True
+    for session in sessions:
+        if session.date_end > now or audit_session(session.session_key)["is_complete"]:
+            continue
+        warmed = prewarm_session(session.session_key)
+        if not warmed or not audit_session(session.session_key)["is_complete"]:
+            print(f"Session {session.session_key} is still incomplete", file=sys.stderr)
+            success = False
+    return success
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pitwall Telemetry Cache Manager")
     parser.add_argument(
@@ -287,6 +306,11 @@ def main():
     )
     parser.add_argument("--audit", action="store_true", help="Audit all cached sessions on disk")
     parser.add_argument(
+        "--sync-current",
+        action="store_true",
+        help="Refresh this year's calendar and pre-cache missing completed races",
+    )
+    parser.add_argument(
         "--delete", type=str, help="Delete a specific session cache directory (e.g. 9159)"
     )
     parser.add_argument(
@@ -297,6 +321,11 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.sync_current:
+        if not sync_current_season():
+            raise SystemExit(1)
+        return
 
     if args.audit:
         audit_all()

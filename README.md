@@ -474,7 +474,23 @@ pitwall-cache --all
 pitwall-cache --year 2024
 
 # Ingest a single session by key
-pitwall-cache --session 9472
+pitwall-cache 9472
+```
+
+### Keep the Production Calendar and Cache Current
+
+After deploying the updated source and rebuilding `pitwall-web`, run this from the Compose project directory:
+
+```bash
+docker compose exec -T pitwall-web python -m pitwall_telemetry_engine.ingestion.cache_manager --sync-current
+```
+
+This refreshes the current season's OpenF1 calendar, then warms completed races that fail the local cache audit. The picker reads the updated calendar from the shared disk mount. If OpenF1 denies access or the refresh fails, the existing calendar stays in place and the command exits with an error.
+
+To retry automatically, add this line using `crontab -e` on the server as a user who can run Docker. Replace `/opt/pitwall` if your Compose project lives elsewhere. `flock` prevents overlapping scheduled runs.
+
+```cron
+*/30 * * * * cd /opt/pitwall && flock -n "$HOME/.pitwall-cache-sync.lock" docker compose exec -T pitwall-web python -m pitwall_telemetry_engine.ingestion.cache_manager --sync-current >> "$HOME/pitwall-cache-sync.log" 2>&1
 ```
 
 The pre-warmer structures cached data on disk as follows:
@@ -631,7 +647,7 @@ sudo systemctl status certbot.timer
 
 4. **Pre-warm a sample race session (Bahrain GP 2024)**:
    ```bash
-   pitwall-cache --session 9472
+   pitwall-cache 9472
    ```
 
 5. **Start the local development server**:

@@ -7,45 +7,35 @@
 import { onFrame, sendAction, state } from './app.js';
 
 let towerContainer = null;
-export const driverMetadata = new Map(); // driver_number -> { acronym, teamColor, fullName, lastName, teamName, compound }
+export const driverMetadata = new Map(); // driver_number -> { acronym, teamColor, fullName, lastName, teamName }
 const rowElements = new Map();  // driver_number -> DOM element
 let initialLoaded = false;
+let metadataRequest;
 let gapMode = 'LEADER'; // 'LEADER', 'INTERVAL', 'LAP_TIME'
 
 // Tire compound map (e.g. "SOFT" -> "S", "MEDIUM" -> "M", "HARD" -> "H")
 function formatCompound(compoundName) {
-    if (!compoundName) return 'S';
+    if (!compoundName) return '?';
     const c = String(compoundName).toUpperCase();
     if (c.startsWith('SOFT')) return 'S';
     if (c.startsWith('MED')) return 'M';
     if (c.startsWith('HARD')) return 'H';
     if (c.startsWith('INTER')) return 'I';
     if (c.startsWith('WET')) return 'W';
-    return c.charAt(0);
+    return '?';
 }
 
 /**
- * Loads static drivers registry and initial tire stints for the session.
+ * Loads the static driver registry for the session.
  */
 async function loadMetadata() {
+    metadataRequest?.abort();
+    const { signal } = (metadataRequest = new AbortController());
     try {
-        const [driversRes, stintsRes] = await Promise.all([
-            fetch(`/api/drivers?session_key=${state.sessionKey}`),
-            fetch(`/api/stints?session_key=${state.sessionKey}`)
-        ]);
-
+        const driversRes = await fetch(`/api/drivers?session_key=${state.sessionKey}`, { signal });
+        if (!driversRes.ok) throw new Error(`Driver request failed (${driversRes.status})`);
         const driversData = await driversRes.json();
-        const stintsData = await stintsRes.json();
-
-        // Map initial stint compound per driver (stint 1)
-        const stintsMap = new Map();
-        if (Array.isArray(stintsData)) {
-            for (const s of stintsData) {
-                if (s.stint_number === 1 && !stintsMap.has(s.driver_number)) {
-                    stintsMap.set(s.driver_number, formatCompound(s.compound));
-                }
-            }
-        }
+        if (signal.aborted) return;
 
         // Populate driverMetadata map
         for (const [key, d] of Object.entries(driversData)) {
@@ -57,7 +47,6 @@ async function loadMetadata() {
                 fullName: d.full_name || d.name_acronym,
                 lastName: d.last_name || d.name_acronym,
                 teamName: d.team_name || 'Formula 1',
-                compound: stintsMap.get(dNum) || 'S',
                 headshotUrl: d.headshot_url || null,
             });
         }
@@ -71,14 +60,16 @@ async function loadMetadata() {
             if (keys.length > 1) state.selectedDrivers.push(keys[1]);
             sendAction({ action: 'select_drivers', drivers: state.selectedDrivers });
         }
+        updateDuelLabel();
     } catch (err) {
-        console.error('[Pitwall] Failed to load timing tower metadata:', err);
+        if (!signal.aborted) console.error('[Pitwall] Failed to load timing tower metadata:', err);
     }
 }
 
 export async function resetTimingTower() {
     driverMetadata.clear();
     rowElements.clear();
+    updateDuelLabel();
     if (towerContainer) {
         const rowsDiv = document.getElementById('tower-rows');
         if (rowsDiv) {
@@ -111,7 +102,7 @@ function getOrCreateRow(driverNumber, initialMeta) {
             <div class="team-name" data-slot="team">${initialMeta.teamName || ''}</div>
         </div>
         <div class="tire-container">
-            <span class="tire-badge ${initialMeta.compound || 'S'}" data-slot="tire">${initialMeta.compound || 'S'}</span>
+            <span class="tire-badge" data-slot="tire">?</span>
             <span class="pit-count" data-slot="pit-count"></span>
         </div>
         <span class="gap-delta" data-slot="gap">--</span>
@@ -176,6 +167,8 @@ function updateDuelLabel() {
     } else if (state.selectedDrivers.length === 1) {
         const d1 = driverMetadata.get(state.selectedDrivers[0])?.acronym || `#${state.selectedDrivers[0]}`;
         label.textContent = `TELEMETRY FOR ${d1} (CLICK ANOTHER TO DUEL)`;
+    } else {
+        label.textContent = 'SELECT DRIVERS TO COMPARE';
     }
 }
 
@@ -218,7 +211,6 @@ function handleTowerFrame(frame) {
                 teamColor: pos.team_color ? `#${pos.team_color}` : '#FFFFFF',
                 fullName: pos.acronym,
                 teamName: '',
-                compound: 'S',
             };
             driverMetadata.set(dNum, meta);
         } else if (pos.team_color) {
@@ -226,16 +218,15 @@ function handleTowerFrame(frame) {
         }
 
         const intData = intervals[String(dNum)] || intervals[dNum] || {};
-        const gapVal = intData.gap_to_leader !== undefined ? intData.gap_to_leader : null;
-        const intervalVal = intData.interval !== undefined ? intData.interval : null;
         const positionVal = intData.position !== undefined ? intData.position : 999;
 
         standings.push({
             driverNumber: dNum,
             meta,
             position: positionVal,
-            gapToLeader: (typeof gapVal === 'number') ? gapVal : 999.0,
-            interval: (typeof intervalVal === 'number') ? intervalVal : null,
+            gapToLeader: intData.gap_to_leader,
+            interval: intData.interval,
+            compound: formatCompound(intData.tyre_compound),
             inPit: intData.in_pit === true,
             isDnf: intData.is_dnf === true,
             pitCount: intData.pit_count || 0,
@@ -294,6 +285,12 @@ function handleTowerFrame(frame) {
             }
         }
 
+        const tireEl = row.querySelector('[data-slot="tire"]');
+        if (tireEl && tireEl.textContent !== item.compound) {
+            tireEl.textContent = item.compound;
+            tireEl.className = item.compound === '?' ? 'tire-badge' : `tire-badge ${item.compound}`;
+        }
+
         // Pit Count
         const pitCountEl = row.querySelector('[data-slot="pit-count"]');
         if (pitCountEl) {
@@ -329,10 +326,10 @@ function handleTowerFrame(frame) {
                     gapEl.style.color = 'var(--text-muted)';
                 } else {
                     if (gapMode === 'LEADER') {
-                        gapEl.textContent = item.gapToLeader < 900 ? `+${item.gapToLeader.toFixed(3)}s` : '--';
+                        gapEl.textContent = formatGap(item.gapToLeader);
                         gapEl.style.color = 'var(--text-secondary)';
                     } else if (gapMode === 'INTERVAL') {
-                        gapEl.textContent = item.interval !== null ? `+${item.interval.toFixed(3)}s` : '--';
+                        gapEl.textContent = formatGap(item.interval);
                         gapEl.style.color = 'var(--text-secondary)';
                     } else if (gapMode === 'LAP_TIME') {
                         gapEl.textContent = item.lastLapTime ? formatLapTime(item.lastLapTime) : '--';
@@ -364,6 +361,11 @@ function handleTowerFrame(frame) {
     updateSelectedRowClasses();
 }
 
+function formatGap(gap) {
+    if (typeof gap === 'number' && Number.isFinite(gap)) return `+${gap.toFixed(3)}s`;
+    return typeof gap === 'string' && gap.trim() ? gap : '--';
+}
+
 /**
  * Formats a raw seconds float into a standard M:SS.mmm string
  */
@@ -382,7 +384,6 @@ export async function initTimingTower() {
     if (!towerContainer) return;
 
     await loadMetadata();
-    updateDuelLabel();
 
     // Setup interactive Gap Header toggle
     const gapBtn = document.getElementById('gap-mode-toggle');

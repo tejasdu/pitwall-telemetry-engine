@@ -107,14 +107,19 @@ function updateBounds() {
 }
 
 // Helper: Fetches circuit geometry once from backend REST API
+let geometryRequest;
+
 async function loadTrackGeometry() {
+  geometryRequest?.abort();
+  const { signal } = (geometryRequest = new AbortController());
   try {
-    const res = await fetch(`/api/track-geometry?session_key=${state.sessionKey}`);
+    const res = await fetch(`/api/track-geometry?session_key=${state.sessionKey}`, { signal });
     if (!res.ok) {
       console.warn('[TrackMap] Track geometry unavailable for session:', state.sessionKey);
       return;
     }
     const data = await res.json();
+    if (signal.aborted) return;
 
     const points = data.points || data.geometry || (Array.isArray(data) ? data : []);
 
@@ -140,7 +145,7 @@ async function loadTrackGeometry() {
       console.log(`[Pitwall] Circuit geometry loaded: ${points.length} points.`);
     }
   } catch (err) {
-    console.error('[Pitwall] Failed to load track geometry:', err);
+    if (!signal.aborted) console.error('[Pitwall] Failed to load track geometry:', err);
   }
 }
 
