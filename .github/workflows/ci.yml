@@ -35,3 +35,9 @@ jobs:
 
       - name: Run Tests (Pytest)
         run: uv run pytest
+
+      - name: Install Headless Chromium
+        run: uv run --frozen --group browser playwright install --with-deps --only-shell chromium
+
+      - name: Run Browser Smoke Test
+        run: uv run --frozen --group browser pytest -m browser --run-browser

@@ -682,6 +682,15 @@ The replay clock is labeled **UTC**; the session picker shows your browser's loc
 
 If a step fails, capture the source and destination session keys, replay clock, screenshot, and any browser console or server error. Note whether the issue repeats without reloading. This is a manual checklist; CI does not run it.
 
+### Automated Browser Smoke Test
+
+GitHub CI also runs a Chromium smoke test against a local server with two fictional races. It checks launch, battle comparison, switching races and back without reloading, UTC clock and driver resets, track geometry requests, and restarting at the finish. It doesn't contact OpenF1 or use your race cache.
+
+```bash
+uv run --group browser playwright install --only-shell chromium
+uv run --group browser pytest -m browser --run-browser
+```
+
 ### Running Tests & Linting
 
 ```bash

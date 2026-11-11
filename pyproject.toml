@@ -26,6 +26,7 @@ requires = ["uv_build>=0.12.2,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
+browser = ["playwright>=1.64,<2"]
 dev = [
     "mypy>=2.4.0",
     "pytest>=9.1.1",
@@ -47,5 +48,8 @@ ignore_missing_imports = true
 check_untyped_defs = true
 
 [tool.pytest.ini_options]
-markers = ["openf1_live: requires live access to OpenF1 (opt in with --run-openf1)"]
+markers = [
+    "browser: requires Playwright and Chromium (opt in with --run-browser)",
+    "openf1_live: requires live access to OpenF1 (opt in with --run-openf1)",
+]
 
