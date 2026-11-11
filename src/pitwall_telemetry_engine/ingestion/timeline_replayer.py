@@ -223,6 +223,9 @@ class SessionCache:
         self._access_order: list[int | str] = []
         self._lock = asyncio.Lock()
 
+    def is_loaded(self, session_key: int | str) -> bool:
+        return session_key in self._cache
+
     def _get_cached(self, key: int | str) -> SessionDataset | None:
         dataset = self._cache.get(key)
         if dataset is not None:

@@ -684,7 +684,7 @@ If a step fails, capture the source and destination session keys, replay clock, 
 
 ### Automated Browser Smoke Test
 
-GitHub CI also runs a Chromium smoke test against a local server with two fictional races. It checks launch, battle comparison, switching races and back without reloading, UTC clock and driver resets, track geometry requests, and restarting at the finish. It doesn't contact OpenF1 or use your race cache.
+GitHub CI runs Chromium smoke tests against a local server with two fictional races. They check launch, battle comparison, race switching, UTC clock and driver resets, track geometry requests, and restarting at the finish. A simulated slow OpenF1 failure also checks that the loading bar remains visible while waiting and that the user can retry or choose another race. These tests don't contact OpenF1 or use your race cache.
 
 ```bash
 uv run --group browser playwright install --only-shell chromium

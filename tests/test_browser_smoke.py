@@ -1,9 +1,11 @@
+import asyncio
 import json
 import re
 import socket
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic
 
+import httpx
 import pytest
 import uvicorn
 
@@ -54,9 +56,9 @@ def replay_server(isolated_cache_and_http, write_cached_race, monkeypatch):
             assert not worker.is_alive(), "Local replay server did not shut down"
 
 
-@pytest.mark.browser
-def test_launch_compare_switch_and_restart_in_chromium(replay_server):
-    from playwright.sync_api import expect, sync_playwright
+@pytest.fixture
+def browser_page(replay_server):
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -71,59 +73,125 @@ def test_launch_compare_switch_and_restart_in_chromium(replay_server):
                     else route.abort()
                 ),
             )
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            page.goto(replay_server)
-            overlay = page.locator("#mission-control-overlay")
-            picker = page.locator("#mc-session-select")
-            launch_button = page.locator("#mc-launch-btn")
-            clock = page.locator("#race-clock")
-            comparison = page.locator("#active-duel-label")
-            scrubber = page.locator("#scrubber")
-            play_button = page.locator("#play-pause-btn")
-            playing_icon = page.locator("#play-icon rect")
-
-            def launch(session_key, country, start_clock, driver):
-                expect(overlay).to_be_visible()
-                picker.select_option(str(session_key))
-                with page.expect_response(
-                    f"{replay_server}/api/track-geometry?session_key={session_key}"
-                ) as geometry:
-                    launch_button.click()
-                assert geometry.value.ok, f"Track geometry returned HTTP {geometry.value.status}"
-                expect(overlay).to_be_hidden()
-                expect(page.locator("#session-title")).to_contain_text(
-                    f"{country} GP", ignore_case=True
-                )
-                expect(clock).to_have_text(re.compile(start_clock))
-                expect(clock.locator("xpath=..")).to_contain_text("UTC")
-                expect(page.locator(f'.tower-row[data-driver="{driver}"]')).to_be_visible()
-                expect(page.locator("#track-canvas")).to_be_visible()
-
-            launch(9472, "Alpha", r"^00:01:4\d$", 55)
-            expect(playing_icon).to_have_count(2)
-            play_button.click()
-            expect(playing_icon).to_have_count(0)
-            scrubber.fill("5.5")
-            expect(clock).to_have_text("00:01:51")
-            page.get_by_role("button", name="Compare D55 with D16: close battle").click()
-            expect(comparison).to_have_text("COMPARING D55 VS D16")
-
-            page.locator("#change-session-btn").click()
-            launch(2, "Beta", r"^01:01:4\d$", 63)
-            expect(page.locator('.tower-row[data-driver="55"]')).to_have_count(0)
-            expect(comparison).to_have_text("COMPARING D4 VS D44")
-            expect(page.locator("#scrubber-pct")).to_have_text(re.compile(r"^[0-4]\.\d%$"))
-
-            page.locator("#change-session-btn").click()
-            launch(9472, "Alpha", r"^00:01:4\d$", 55)
-            expect(page.locator('.tower-row[data-driver="63"]')).to_have_count(0)
-            scrubber.fill("100")
-            expect(clock).to_have_text("00:05:00")
-            expect(playing_icon).to_have_count(0)
-            play_button.click()
-            expect(clock).to_have_text(re.compile(r"^00:01:4\d$"))
-            expect(playing_icon).to_have_count(2)
-            assert not errors
+            yield page
         finally:
             browser.close()
+
+
+@pytest.mark.browser
+def test_launch_compare_switch_and_restart_in_chromium(replay_server, browser_page):
+    from playwright.sync_api import expect
+
+    page = browser_page
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(replay_server)
+    overlay = page.locator("#mission-control-overlay")
+    picker = page.locator("#mc-session-select")
+    launch_button = page.locator("#mc-launch-btn")
+    clock = page.locator("#race-clock")
+    comparison = page.locator("#active-duel-label")
+    scrubber = page.locator("#scrubber")
+    play_button = page.locator("#play-pause-btn")
+    playing_icon = page.locator("#play-icon rect")
+
+    def launch(session_key, country, start_clock, driver):
+        expect(overlay).to_be_visible()
+        picker.select_option(str(session_key))
+        with page.expect_response(
+            f"{replay_server}/api/track-geometry?session_key={session_key}"
+        ) as geometry:
+            launch_button.click()
+        assert geometry.value.ok, f"Track geometry returned HTTP {geometry.value.status}"
+        expect(overlay).to_be_hidden()
+        expect(page.locator("#session-title")).to_contain_text(f"{country} GP", ignore_case=True)
+        expect(clock).to_have_text(re.compile(start_clock))
+        expect(clock.locator("xpath=..")).to_contain_text("UTC")
+        expect(page.locator(f'.tower-row[data-driver="{driver}"]')).to_be_visible()
+        expect(page.locator("#track-canvas")).to_be_visible()
+
+    launch(9472, "Alpha", r"^00:01:4\d$", 55)
+    expect(playing_icon).to_have_count(2)
+    play_button.click()
+    expect(playing_icon).to_have_count(0)
+    scrubber.fill("5.5")
+    expect(clock).to_have_text("00:01:51")
+    page.get_by_role("button", name="Compare D55 with D16: close battle").click()
+    expect(comparison).to_have_text("COMPARING D55 VS D16")
+
+    page.locator("#change-session-btn").click()
+    launch(2, "Beta", r"^01:01:4\d$", 63)
+    expect(page.locator('.tower-row[data-driver="55"]')).to_have_count(0)
+    expect(comparison).to_have_text("COMPARING D4 VS D44")
+    expect(page.locator("#scrubber-pct")).to_have_text(re.compile(r"^[0-4]\.\d%$"))
+
+    page.locator("#change-session-btn").click()
+    launch(9472, "Alpha", r"^00:01:4\d$", 55)
+    expect(page.locator('.tower-row[data-driver="63"]')).to_have_count(0)
+    scrubber.fill("100")
+    expect(clock).to_have_text("00:05:00")
+    expect(playing_icon).to_have_count(0)
+    play_button.click()
+    expect(clock).to_have_text(re.compile(r"^00:01:4\d$"))
+    expect(playing_icon).to_have_count(2)
+    assert not errors
+
+
+@pytest.mark.browser
+def test_slow_replay_load_failure_allows_retry_or_another_race(
+    replay_server, browser_page, isolated_cache_and_http, monkeypatch
+):
+    from playwright.sync_api import expect
+
+    (isolated_cache_and_http / "2" / "stints.json").unlink()
+    cache = websocket_manager.session_cache
+    load = cache.get
+    release = Event()
+    attempts = []
+
+    async def load_with_failure(session_key):
+        if session_key != 2:
+            return await load(session_key)
+        attempts.append(session_key)
+        assert await asyncio.to_thread(release.wait, 15), "Test did not release the replay load"
+        request = httpx.Request("GET", "https://api.openf1.org/v1/stints?session_key=2")
+        response = httpx.Response(503, request=request)
+        raise httpx.HTTPStatusError("OpenF1 unavailable", request=request, response=response)
+
+    monkeypatch.setattr(cache, "get", load_with_failure)
+    page = browser_page
+    page.goto(replay_server)
+    picker = page.locator("#mc-session-select")
+    launch = page.locator("#mc-launch-btn")
+    overlay = page.locator("#mission-control-overlay")
+    progress = page.get_by_role("progressbar", name="Replay loading")
+    choose = page.get_by_role("button", name="Choose another race")
+    error = page.get_by_role("alert")
+    picker.select_option("2")
+    launch.click()
+    try:
+        expect(page.get_by_role("status")).to_contain_text("Preparing race data")
+        expect(progress).to_be_visible()
+        assert progress.get_attribute("value") is None
+        expect(overlay).to_be_visible()
+        expect(picker).to_be_disabled()
+        expect(choose).to_be_visible()
+    finally:
+        release.set()
+
+    expect(error).to_contain_text("Couldn't download replay data")
+    expect(progress).to_be_hidden()
+    expect(launch).to_have_text("Retry")
+    launch.click()
+    expect(error).to_be_visible()
+    expect(launch).to_have_text("Retry")
+    assert attempts == [2, 2]
+
+    choose.click()
+    expect(error).to_be_hidden()
+    expect(picker).to_be_enabled()
+    picker.select_option("9472")
+    launch.click()
+    expect(overlay).to_be_hidden()
+    expect(progress).to_be_hidden()
+    expect(page.locator('.tower-row[data-driver="55"]')).to_be_visible()

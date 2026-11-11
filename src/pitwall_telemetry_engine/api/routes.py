@@ -63,8 +63,12 @@ def drivers(session_key: str | int = "latest", driver_number: int | None = None)
 
 
 @router.websocket("/ws/telemetry")
-async def telemetry_websocket(websocket: WebSocket, session_key: str | int = 9472):
-    if not await manager.connect(websocket, session_key=session_key):
+async def telemetry_websocket(
+    websocket: WebSocket, session_key: str | int = 9472, load_status: bool = False
+):
+    if not await manager.connect(
+        websocket, session_key=session_key, report_load_status=load_status
+    ):
         return
     try:
         while True:

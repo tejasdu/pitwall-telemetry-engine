@@ -17,7 +17,7 @@ export const state = {
 
 let isIntentionalDisconnect = false;
 
-export function resetApp() {
+function disconnectReplay() {
     isIntentionalDisconnect = true;
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -31,6 +31,10 @@ export function resetApp() {
         ws.close();
         ws = null;
     }
+}
+
+export function resetApp() {
+    disconnectReplay();
     state.latestFrame = null;
     state.selectedDrivers = [];
     state.isPlaying = false;
@@ -65,10 +69,42 @@ export function sendAction(data) {
     else { console.warn('[Pitwall] Cannot send action: WebSocket not connected', data); }
 }
 
+function setLoading(message) {
+    const loading = document.getElementById('mc-loading');
+    const status = document.getElementById('mc-loading-message');
+    if (status) status.textContent = message || '';
+    if (loading) loading.hidden = !message;
+}
+
+function setChooseRaceVisible(visible) {
+    const button = document.getElementById('mc-choose-race');
+    if (button) button.hidden = !visible;
+}
+
+function showRacePicker(canClose) {
+    setLoading(null);
+    setChooseRaceVisible(false);
+    document.getElementById('mission-control-overlay')?.classList.remove('hidden');
+    document.getElementById('mc-launch-error').hidden = true;
+    document.getElementById('mc-close-btn').style.display = canClose ? 'block' : 'none';
+    const launchBtn = document.getElementById('mc-launch-btn');
+    const sessionSelect = document.getElementById('mc-session-select');
+    const hasRace = /^\d+$/.test(sessionSelect.value);
+    launchBtn.textContent = 'LAUNCH ENGINE';
+    launchBtn.disabled = !hasRace;
+    sessionSelect.disabled = !hasRace;
+    document.getElementById('mc-year-select').disabled = false;
+    sessionSelect.focus();
+}
+
 function showLaunchError(message) {
-    isIntentionalDisconnect = true;
+    disconnectReplay();
+    setLoading(null);
+    setChooseRaceVisible(true);
     const overlay = document.getElementById('mission-control-overlay');
     if (overlay) overlay.classList.remove('hidden');
+    const closeBtn = document.getElementById('mc-close-btn');
+    if (closeBtn) closeBtn.style.display = 'none';
     const error = document.getElementById('mc-launch-error');
     if (error) {
         error.textContent = message;
@@ -76,13 +112,9 @@ function showLaunchError(message) {
     }
     const launchBtn = document.getElementById('mc-launch-btn');
     if (launchBtn) {
-        launchBtn.textContent = 'LAUNCH ENGINE';
+        launchBtn.textContent = 'Retry';
         launchBtn.disabled = false;
     }
-    const yearSelect = document.getElementById('mc-year-select');
-    const sessionSelect = document.getElementById('mc-session-select');
-    if (yearSelect) yearSelect.disabled = false;
-    if (sessionSelect) sessionSelect.disabled = false;
 }
 
 // Connects to the FastAPI WebSocket streaming endpoint.
@@ -94,7 +126,7 @@ function connectWebSocket() {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws/telemetry?session_key=${state.sessionKey}`;
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/telemetry?session_key=${state.sessionKey}&load_status=true`;
 
     console.log(`[Pitwall] Connecting to live telemetry: ${wsUrl}`);
     ws = new WebSocket(wsUrl);
@@ -112,6 +144,13 @@ function connectWebSocket() {
         try {
             const frame = JSON.parse(event.data);
 
+            if (frame.type === 'loading') {
+                if (frame.stage === 'preparing' && !state.latestFrame) {
+                    setLoading('Preparing race data… This may take a few minutes.');
+                }
+                return;
+            }
+
             // Handle server-side telemetry availability error
             if (frame.error || frame.type === 'error') {
                 console.error('[Pitwall] Telemetry error:', frame.message);
@@ -119,7 +158,10 @@ function connectWebSocket() {
                 return;
             }
 
+            if (!Number.isFinite(frame.t_sim)) return;
             if (!state.latestFrame) {
+                setLoading(null);
+                setChooseRaceVisible(false);
                 document.getElementById('mission-control-overlay')?.classList.add('hidden');
                 updateTicker('REPLAY CONNECTED');
             }
@@ -147,6 +189,11 @@ function connectWebSocket() {
 
         if (event.code === 4004) {
             showLaunchError('Replay data is unavailable for this race.');
+            return;
+        }
+
+        if (!state.latestFrame) {
+            showLaunchError('The connection closed before the replay loaded. Please retry or choose another race.');
             return;
         }
 
@@ -345,23 +392,7 @@ function initApp() {
     const changeSessionBtn = document.getElementById('change-session-btn');
     if (changeSessionBtn) {
         changeSessionBtn.addEventListener('click', () => {
-            const overlay = document.getElementById('mission-control-overlay');
-            if (overlay) overlay.classList.remove('hidden');
-
-            const closeBtn = document.getElementById('mc-close-btn');
-            if (closeBtn && window.pitwallInitialized) {
-                closeBtn.style.display = 'block';
-            }
-
-            const launchBtn = document.getElementById('mc-launch-btn');
-            const yearSelect = document.getElementById('mc-year-select');
-            const sessionSelect = document.getElementById('mc-session-select');
-            if (launchBtn) {
-                launchBtn.innerHTML = 'LAUNCH ENGINE';
-                launchBtn.disabled = false;
-            }
-            if (yearSelect) yearSelect.disabled = false;
-            if (sessionSelect) sessionSelect.disabled = false;
+            showRacePicker(true);
         });
     }
 }
@@ -442,6 +473,11 @@ function initMissionControl() {
         });
     }
 
+    document.getElementById('mc-choose-race').addEventListener('click', () => {
+        resetApp();
+        showRacePicker(false);
+    });
+
     // Populate championship years from 2023 through current season
     const availableYears = [2026, 2025, 2024, 2023];
     yearSelect.innerHTML = '';
@@ -470,7 +506,10 @@ function initMissionControl() {
 
         const error = document.getElementById('mc-launch-error');
         if (error) error.hidden = true;
-        launchBtn.textContent = 'LOADING REPLAY DATA...';
+        if (closeBtn) closeBtn.style.display = 'none';
+        setLoading('Opening replay…');
+        setChooseRaceVisible(true);
+        launchBtn.textContent = 'Loading…';
         launchBtn.disabled = true;
         yearSelect.disabled = true;
         sessionSelect.disabled = true;

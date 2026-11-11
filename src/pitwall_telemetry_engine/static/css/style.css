@@ -663,6 +663,34 @@ body {
     cursor: not-allowed;
 }
 
+.mc-loading {
+    margin-top: 16px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.mc-loading progress {
+    width: 100%;
+    height: 8px;
+    accent-color: #FF2A55;
+}
+
+.mc-choose-race {
+    margin-top: 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    background: var(--bg-panel-elevated);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mc-loading progress {
+        display: none;
+    }
+}
+
 /* Custom Scrollbar Styles */
 ::-webkit-scrollbar {
     width: 8px;

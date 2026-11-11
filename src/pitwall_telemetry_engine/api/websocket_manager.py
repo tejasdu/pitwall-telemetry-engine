@@ -4,6 +4,7 @@ import logging
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 
+from pitwall_telemetry_engine.ingestion.cache_manager import audit_session
 from pitwall_telemetry_engine.ingestion.timeline_replayer import TimelineReplayer, session_cache
 
 logger = logging.getLogger(__name__)
@@ -27,11 +28,29 @@ class ConnectionManager:
     def __init__(self):
         self.sessions: dict[WebSocket, ClientSession] = {}
 
-    async def connect(self, websocket: WebSocket, session_key: str | int = 9472):
+    async def connect(
+        self,
+        websocket: WebSocket,
+        session_key: str | int = 9472,
+        *,
+        report_load_status: bool = False,
+    ):
         await websocket.accept()
 
         key = int(session_key) if str(session_key).isdigit() else session_key
         try:
+            if report_load_status:
+                stage = "opening"
+                if isinstance(key, int) and key >= 0 and not session_cache.is_loaded(key):
+                    try:
+                        audit = await asyncio.to_thread(audit_session, key)
+                    except OSError:
+                        logger.debug("Could not inspect cache for session %s", key, exc_info=True)
+                    else:
+                        if not audit["is_complete"]:
+                            stage = "preparing"
+                await websocket.send_json({"type": "loading", "stage": stage})
+
             dataset = await session_cache.get(key)
             replayer = TimelineReplayer(dataset, fps=30)
         except Exception as e:

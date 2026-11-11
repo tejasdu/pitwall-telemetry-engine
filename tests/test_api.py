@@ -90,7 +90,10 @@ async def test_switch_session_replaces_the_running_stream(monkeypatch):
     ("status_code", "message"),
     [(429, "rate limiting"), (401, "denied access"), (403, "denied access")],
 )
-def test_upstream_access_failure_reports_launch_error(monkeypatch, status_code, message):
+@pytest.mark.parametrize("load_status", [False, True])
+def test_upstream_access_failure_reports_launch_error(
+    monkeypatch, status_code, message, load_status
+):
     request = httpx.Request("GET", "https://api.openf1.org/v1/car_data")
     response = httpx.Response(status_code, request=request)
     monkeypatch.setattr(
@@ -101,7 +104,11 @@ def test_upstream_access_failure_reports_launch_error(monkeypatch, status_code, 
         ),
     )
 
-    with client.websocket_connect("/api/ws/telemetry?session_key=42") as socket:
+    with client.websocket_connect(
+        f"/api/ws/telemetry?session_key=42&load_status={str(load_status).lower()}"
+    ) as socket:
+        if load_status:
+            assert socket.receive_json() == {"type": "loading", "stage": "preparing"}
         error = socket.receive_json()
         assert error["type"] == "error"
         assert message in error["message"]
