@@ -666,6 +666,22 @@ sudo systemctl status certbot.timer
 6. **Open your browser**:
    Navigate to [http://localhost:8000](http://localhost:8000) to access the digital pitwall interface.
 
+### Manual Browser Smoke Checklist
+
+Run this on the build you plan to release. Record the commit (`git rev-parse --short HEAD`), browser, environment, and pass/fail for each check. Use cached Brazil 2026 (`11412`) and Bahrain 2024 (`9472`) so an upstream download doesn't obscure the race-switch result.
+
+The replay clock is labeled **UTC**; the session picker shows your browser's local time.
+
+| Check | Action | Pass criteria |
+|---|---|---|
+| Launch | Open Brazil 2026 and select **Launch Engine**. | The overlay clears when replay data arrives. The clock advances, cars move, and the timing tower populates. |
+| Compare | Pause near `17:04:00` on Brazil's replay clock. Click **CLOSE BATTLE** on VER's row. | The comparison shows VER and COL, and both cars have purple halos at that timestamp. |
+| Finish | Drag the scrubber to 100%, then press Play. | Playback pauses at the finish, then restarts from the beginning and responds to controls. |
+| Switch races | In Brazil, seek well into the race and pause. Without refreshing, use **Change Session** to launch Bahrain 2024. | Once the new replay loads, the overlay clears and the title, map, and timing tower all show Bahrain. Its clock starts near `15:00:00` UTC and the scrubber starts near 0%; neither keeps Brazil's position. The old comparison selection does not carry over. |
+| Switch back | Use **Change Session** again to launch Brazil. | Brazil starts near `17:00:00` UTC with the Interlagos map. The clock, timing tower, and controls respond without a page reload. |
+
+If a step fails, capture the source and destination session keys, replay clock, screenshot, and any browser console or server error. Note whether the issue repeats without reloading. This is a manual checklist; CI does not run it.
+
 ### Running Tests & Linting
 
 ```bash

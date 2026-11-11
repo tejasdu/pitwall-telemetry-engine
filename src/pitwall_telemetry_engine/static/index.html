@@ -126,9 +126,10 @@
                     style="font-family: var(--font-mono); font-weight: 800; font-size: 12px; padding: 4px 10px; border-radius: 4px; background: rgba(0, 229, 153, 0.15); color: #00E599; border: 1px solid rgba(0, 229, 153, 0.3);">
                     TRACK CLEAR
                 </div>
-                <div id="race-clock" class="tabular-nums"
-                    style="font-size: 14px; font-weight: 700; color: var(--text-primary);">
-                    --:--:--
+                <div class="tabular-nums"
+                    style="font-size: 14px; font-weight: 700; color: var(--text-primary); white-space: nowrap;">
+                    <span id="race-clock">--:--:--</span>
+                    <span title="Coordinated Universal Time">UTC</span>
                 </div>
             </div>
         </header>
