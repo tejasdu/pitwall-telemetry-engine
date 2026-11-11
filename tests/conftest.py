@@ -8,11 +8,20 @@ from pitwall_telemetry_engine.ingestion import cache_manager, openf1_client
 from pitwall_telemetry_engine.ingestion.timeline_replayer import SessionCache
 
 
+def pytest_addoption(parser):
+    parser.addoption("--run-openf1", action="store_true", help="Run live OpenF1 integration tests")
+
+
 @pytest.fixture(autouse=True)
-def isolated_cache_and_http(tmp_path, monkeypatch):
+def isolated_cache_and_http(tmp_path, monkeypatch, request):
     cache_dir = tmp_path / "sessions"
     monkeypatch.setattr(openf1_client, "CACHE_DIR", cache_dir)
     monkeypatch.setattr(cache_manager, "CACHE_DIR", cache_dir)
+
+    if request.node.get_closest_marker("openf1_live"):
+        if not request.config.getoption("--run-openf1"):
+            pytest.skip("Live OpenF1 check requires --run-openf1")
+        return cache_dir
 
     def reject_http(transport, request):
         pytest.fail(f"Unexpected outbound HTTP request: {request.url}")

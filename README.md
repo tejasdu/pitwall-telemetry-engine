@@ -688,6 +688,14 @@ uv run ruff format .
 
 The default Python suite uses a temporary cache directory and blocks outbound HTTP. Replay and battle tests populate it with a small fictional race and load it through the normal cache reader; no downloaded race data or OpenF1 access is required. The frontend tests use an isolated DOM stub; they do not replace real-browser visual checks.
 
+To verify that the OpenF1 client can fetch and parse historical session metadata and a driver registry, run the opt-in live check:
+
+```bash
+uv run pytest -m openf1_live --run-openf1
+```
+
+This uses a fresh temporary cache, not your local replay cache. It requires network access and is skipped by default, so upstream outages or access restrictions do not block required CI.
+
 ---
 
 ## License

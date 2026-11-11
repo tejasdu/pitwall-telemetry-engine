@@ -46,3 +46,6 @@ warn_unused_configs = true
 ignore_missing_imports = true
 check_untyped_defs = true
 
+[tool.pytest.ini_options]
+markers = ["openf1_live: requires live access to OpenF1 (opt in with --run-openf1)"]
+
