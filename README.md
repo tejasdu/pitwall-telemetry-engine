@@ -65,7 +65,7 @@ Unlike static post-race analysis dashboards, Pitwall Telemetry Engine treats For
 
 - **60 FPS Real-Time WebSocket Telemetry**: Continuously streams 20-car spatial locations, engine RPM, vehicle speeds, throttle percentages, braking pressures, and DRS deployment states with zero frame tearing and sub-15ms client latency.
 - **Sub-Frame Linear & Spline Interpolation**: Seamlessly bridges the gap between variable OpenF1 GPS updates (~3–4 Hz) and powertrain telemetry (~10–20 Hz) by dynamically calculating linear gradients and Catmull-Rom circuit spline projections.
-- **Automated Battle & Duel Inference Engine**: Detects active overtaking threats when trailing cars enter the critical $\le 1.000\text{s}$ DRS zone, highlighting wheel-to-wheel battles on both the timing tower and 2D canvas with broadcast-grade glowing badges.
+- **Close Battle Indicators**: Highlights recent reported intervals of up to one second between adjacent classified drivers. These are comparison shortcuts, not predictions of overtaking or DRS eligibility.
 - **Live On-Screen Lap Counter**: Monitors race leader progression and lap sector timestamps in real time, dynamically rendering the current lap versus total race distance (e.g. `LAP 24 / 57`) alongside official track flags.
 - **Dual-Driver Cockpit Comparison Drawer**: Enables one-click comparison between any two drivers on the grid. Features dynamic driver headshots, team color badges, digital speedometers, gear selectors, rev-limit visualizers, brake/throttle pedal bars, and DRS activation flags.
 - **87-Race Offline NVMe SSD Cache**: Pre-warms and verifies over 17 GB of multi-season race telemetry covering every Grand Prix from 2023 through 2026, shielding the platform from external API rate limits (HTTP 429) and ensuring instant session switching.
@@ -87,7 +87,7 @@ flowchart TD
     subgraph Core Telemetry Engine
         D -->|Pydantic Models| E[timeline_replayer.py<br/>Timeline Replayer Engine]
         E -->|Sub-Frame Spline Interpolation| F[Spatial & Engine State]
-        E -->|Proximity & Deceleration Checks| G[Battle & Duel Inference Engine]
+        E -->|Fresh Intervals & Driver Status| G[Close Battle Indicators]
         E -->|Sector Timestamps & Leader Lap| H[Lap Counter & Progress Tracker]
         E -->|Flag State Machines| I[FIA Race Control Parser]
         F & G & H & I -->|60 Hz Aggregated Frame| J[websocket_manager.py]
@@ -226,20 +226,26 @@ Raw GPS coordinates from OpenF1 are unprojected integer values spanning arbitrar
 
 ### Active Battle & Duel Detection Engine
 
-The telemetry engine continuously evaluates proximity matrices between every pair of on-track vehicles. A wheel-to-wheel **Battle** is triggered when:
+The **CLOSE BATTLE** badge is a conservative timing-based comparison aid, not proof of wheel-to-wheel racing, an imminent overtake, a dive-bomb, or DRS eligibility. It appears when:
 
-1. The interval gap between trailing attacker car $A$ and leading defender car $D$ is $\le 1.000\text{s}$.
-2. Neither vehicle is currently in the pit lane (`in_pit == False`).
-3. The track condition is under active racing conditions (flags are not `RED`, `SC`, or `VSC`).
+1. The trailing driver's reported interval is numeric and greater than zero, up to one second.
+2. Official positions identify a unique adjacent pair. After a position update, a new interval must confirm the gap before the badge returns.
+3. The interval and each driver's latest available telemetry or GPS sample are no more than ten replay-seconds old. Future samples are never used.
+4. Neither driver is marked as in the pit lane, retired, or lapped. Pit lane duration takes precedence over legacy pit duration when supplied.
+5. The track flag is `GREEN` and the replay has not reached its end.
+
+The ten-second freshness limit is an MVP heuristic allowing for missed updates; [OpenF1 intervals](https://openf1.org/docs/#intervals) normally update approximately every four seconds. Missing or ambiguous data hides the badge rather than guessing. Pit and retirement filtering still depends on the available source data and existing status inference.
+
+Clicking the badge selects the trailing driver and the identified car ahead. Both cars receive map halos. Detection uses the replay timestamp only, so pausing, seeking backward, restarting, and independent viewers do not carry over detection history. Battle payloads contain `attacker`, `defender`, and `gap`; the unsupported `is_drs_threat` and `is_dive_bomb` fields are removed.
 
 ```mermaid
 flowchart LR
-    A[Interval Gap ≤ 1.000s] --> B{In Pit Lane?}
-    B -->|Yes| C[Suppress Battle Alert]
-    B -->|No| D{Track Flag State?}
-    D -->|Red / SC / VSC| C
-    D -->|Green / Clear| E[Flag Active Battle]
-    E --> F[Display Glowing BATTLE Badge on Tower]
+    A[Recent Positive Interval ≤ 1.000s] --> B{Unique Pair and Eligible Drivers?}
+    B -->|No| C[Hide Indicator]
+    B -->|Yes| D{Green Flag and Replay Not Finished?}
+    D -->|No| C
+    D -->|Yes| E[Close Reported Interval]
+    E --> F[Display CLOSE BATTLE Badge on Tower]
     E --> G[Highlight Car Halos on 2D Canvas]
     E --> H[Enable Head-to-Head Telemetry Comparison]
 ```
@@ -536,7 +542,7 @@ src/pitwall_telemetry_engine/static/js/
 ### HTML5 Canvas 60 FPS Circuit Visualizer
 - Renders smooth vector circuit geometry with distinct sector boundaries (S1, S2, S3).
 - Animates 20 moving car dots styled with official team liveries and driver number tags.
-- Draws pulsating purple battle halos around vehicles actively engaged in wheel-to-wheel duels ($\text{gap} \le 1.000\text{s}$).
+- Draws purple halos around both drivers in each reported close battle.
 
 ### Broadcast-Grade Timing Tower & Interval Toggles
 - Dynamic leaderboard sorted in real time by official race position (P1 through P20).
@@ -546,7 +552,7 @@ src/pitwall_telemetry_engine/static/js/
   - `GAP TO LEADER` (e.g. `+4.120s`)
   - `INTERVAL` (gap to car directly ahead, e.g. `+0.412s`)
   - `LAST LAP TIME` (e.g. `1:32.415`)
-- **Glowing Battle Badges**: Drivers involved in active duels display an illuminated `BATTLE` badge. Clicking the badge immediately loads both cars into the Cockpit Telemetry comparison drawer.
+- **Close Battle Badges**: Eligible trailing drivers display a `CLOSE BATTLE` button. Its tooltip identifies the car ahead and explains the limitation; clicking it selects both cars for cockpit comparison.
 
 ### Dual-Driver Cockpit Telemetry Comparison
 - Side-by-side comparison between Driver 1 and Driver 2.
@@ -666,6 +672,12 @@ sudo systemctl status certbot.timer
 # Run pytest test suite
 uv run pytest
 
+# Run deterministic battle regressions without race caches or OpenF1
+uv run pytest tests/test_battles.py
+
+# Run timing-tower interaction unit tests (Node.js 20+; no npm packages required)
+node --experimental-vm-modules --test tests/frontend/battles.test.mjs
+
 # Check code formatting and linting with Ruff
 uv run ruff check .
 uv run ruff format --check .
@@ -673,6 +685,8 @@ uv run ruff format --check .
 # Auto-format codebase
 uv run ruff format .
 ```
+
+The default Python suite uses a temporary cache directory and blocks outbound HTTP. Replay and battle tests populate it with a small fictional race and load it through the normal cache reader; no downloaded race data or OpenF1 access is required. The frontend tests use an isolated DOM stub; they do not replace real-browser visual checks.
 
 ---
 

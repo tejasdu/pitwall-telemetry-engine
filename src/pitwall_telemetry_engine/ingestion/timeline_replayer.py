@@ -3,6 +3,7 @@ import logging
 import time
 from bisect import bisect_right
 from datetime import datetime, timezone
+from math import isfinite
 
 import httpx
 
@@ -18,10 +19,6 @@ from pitwall_telemetry_engine.ingestion.openf1_client import (
     get_session,
     get_stints,
 )
-from pitwall_telemetry_engine.metrics.inferences import (
-    calculate_deceleration,
-    is_heavy_braking,
-)
 from pitwall_telemetry_engine.schemas.car_data import CarData
 from pitwall_telemetry_engine.schemas.driver import Driver
 from pitwall_telemetry_engine.schemas.laps import Laps
@@ -29,6 +26,8 @@ from pitwall_telemetry_engine.schemas.location import Location
 from pitwall_telemetry_engine.schemas.pit import Pit
 
 logger = logging.getLogger(__name__)
+
+BATTLE_MAX_DATA_AGE_SECONDS = 10.0
 
 
 class DriverTimeline:
@@ -319,9 +318,6 @@ class TimelineReplayer:
         self.is_playing = False
         self.playback_speed = 1.0
 
-        # Cache previous ticks per driver to compute deceleration gradients
-        self._prev_ticks: dict[int, CarData] = {}
-
     def play(self) -> None:
         """Resumes playback or restarts a finished replay."""
         if self.t_sim >= self.end_time:
@@ -480,7 +476,10 @@ class TimelineReplayer:
                 for i in range(idx, start_search - 1, -1):
                     rec = self.positions[i]
                     if rec.driver_number not in latest_by_driver:
-                        latest_by_driver[rec.driver_number] = {"position": rec.position}
+                        latest_by_driver[rec.driver_number] = {
+                            "position": rec.position,
+                            "position_updated_at": rec.date.timestamp(),
+                        }
                     if len(latest_by_driver) >= len(self.drivers):
                         break
 
@@ -502,48 +501,80 @@ class TimelineReplayer:
                         latest_by_driver[interval_rec.driver_number]["gap_to_leader"] = (
                             interval_rec.gap_to_leader
                         )
+                        latest_by_driver[interval_rec.driver_number]["interval_updated_at"] = (
+                            interval_rec.date.timestamp()
+                        )
                     if len(drivers_found) >= len(self.drivers):
                         break
 
         return latest_by_driver
 
     def detect_battles(self, flag: str, intervals_map: dict[int, dict]) -> list[dict]:
-        """
-        Identifies active battles, DRS attack windows, and dive-bomb threats.
-        """
-        # DRS & overtaking is prohibited under a flag
-        if flag in ("YELLOW", "SC", "VSC", "RED"):
+        """Identify recent close intervals between unambiguous adjacent classified drivers."""
+        if flag != "GREEN" or self.t_sim >= self.end_time:
             return []
 
+        drivers_by_position: dict[int, list[int]] = {}
+        for driver_number, data in intervals_map.items():
+            position = data.get("position")
+            if isinstance(position, int) and position > 0:
+                drivers_by_position.setdefault(position, []).append(driver_number)
+
         battles = []
-        for d_num, data in intervals_map.items():
+        for driver_number, data in intervals_map.items():
             gap = data.get("interval")
-            if isinstance(gap, (int, float)) and 0.0 < gap <= 1.0:
-                # Driver is within DRS threat window (<= 1.000s)
-                tl = self.timelines.get(d_num)
-                curr_tick = tl.get_telemetry_at(self.t_sim) if tl else None
-                prev_tick = self._prev_ticks.get(d_num)
+            if (
+                isinstance(gap, bool)
+                or not isinstance(gap, (int, float))
+                or not isfinite(gap)
+                or not 0.0 < gap <= 1.0
+            ):
+                continue
 
-                decel = (
-                    calculate_deceleration(prev_tick, curr_tick)
-                    if prev_tick and curr_tick
-                    else None
-                )
-                dive_bomb = (
-                    gap <= 0.400 and curr_tick is not None and is_heavy_braking(curr_tick, decel)
-                )
+            position = data.get("position")
+            if not isinstance(position, int) or position <= 1:
+                continue
+            ahead = drivers_by_position.get(position - 1, [])
+            if len(drivers_by_position[position]) != 1 or len(ahead) != 1:
+                continue
+            defender = ahead[0]
+            interval_time = data.get("interval_updated_at")
+            if interval_time is None or not (
+                0 <= self.t_sim - interval_time <= BATTLE_MAX_DATA_AGE_SECONDS
+            ):
+                continue
 
+            eligible = True
+            for participant in (driver_number, defender):
+                status = intervals_map[participant]
+                position_time = status.get("position_updated_at")
+                if (
+                    status.get("in_pit")
+                    or status.get("is_dnf")
+                    or isinstance(status.get("gap_to_leader"), str)
+                    or position_time is None
+                    or position_time > interval_time
+                ):
+                    eligible = False
+                    break
+                timeline = self.timelines.get(participant)
+                latest_activity = []
+                if timeline:
+                    for timestamps in (timeline.tel_times, timeline.loc_times):
+                        sample_index = bisect_right(timestamps, self.t_sim) - 1
+                        if sample_index >= 0:
+                            latest_activity.append(timestamps[sample_index])
+                if (
+                    not latest_activity
+                    or self.t_sim - max(latest_activity) > BATTLE_MAX_DATA_AGE_SECONDS
+                ):
+                    eligible = False
+                    break
+
+            if eligible:
                 battles.append(
-                    {
-                        "attacker": d_num,
-                        "gap": round(gap, 3),
-                        "is_drs_threat": True,
-                        "is_dive_bomb": dive_bomb,
-                    }
+                    {"attacker": driver_number, "defender": defender, "gap": round(gap, 3)}
                 )
-
-                if curr_tick:
-                    self._prev_ticks[d_num] = curr_tick
 
         return battles
 
@@ -592,7 +623,6 @@ class TimelineReplayer:
 
         # 4. Gaps, battles, and status flags (PIT / DNF)
         intervals_map = self.get_latest_intervals()
-        battles = self.detect_battles(flag, intervals_map)
 
         for d_num in self.drivers.keys():
             if d_num not in intervals_map:
@@ -604,8 +634,9 @@ class TimelineReplayer:
             for p in pits:
                 if p.date.timestamp() <= self.t_sim:
                     pit_count += 1
-                if p.pit_duration:
-                    end_time = p.date.timestamp() + p.pit_duration
+                pit_duration = p.lane_duration if p.lane_duration is not None else p.pit_duration
+                if pit_duration:
+                    end_time = p.date.timestamp() + pit_duration
                     if p.date.timestamp() <= self.t_sim <= end_time:
                         in_pit = True
 
@@ -644,6 +675,8 @@ class TimelineReplayer:
             intervals_map[d_num]["tyre_compound"] = (
                 changes[stint_idx][1] if stint_idx >= 0 else None
             )
+
+        battles = self.detect_battles(flag, intervals_map)
 
         # 5. Lap tracking & progress calculation
         current_lap = 1 if self.total_laps > 0 else 0

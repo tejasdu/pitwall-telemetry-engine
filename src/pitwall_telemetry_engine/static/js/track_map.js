@@ -254,23 +254,15 @@ function renderLoop() {
       }
     }
 
-    // 2. Draw Battle Tethers (glowing brackets between dueling cars)
-    for (const b of activeBattles) {
-      if (b.gap <= 0.500) {
-        // Find attacker position
-        const attacker = driverPositions.get(b.attacker);
-        if (attacker) {
-          const ax = toCanvasX(attacker.currentX);
-          const ay = toCanvasY(attacker.currentY);
-
-          // Glowing pulse ring on attacker
-          ctx.beginPath();
-          ctx.arc(ax, ay, 12, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(155, 81, 224, 0.6)';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
+    const battleDrivers = new Set(activeBattles.flatMap(battle => [battle.attacker, battle.defender]));
+    for (const driverNumber of battleDrivers) {
+      const car = driverPositions.get(driverNumber);
+      if (!car) continue;
+      ctx.beginPath();
+      ctx.arc(toCanvasX(car.currentX), toCanvasY(car.currentY), 12, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(155, 81, 224, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
     }
 
     // 3. Draw 20 Car Dots with Smooth Sub-Frame Lerp Gliding

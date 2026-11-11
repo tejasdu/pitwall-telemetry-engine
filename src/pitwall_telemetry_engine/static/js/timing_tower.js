@@ -106,12 +106,22 @@ function getOrCreateRow(driverNumber, initialMeta) {
             <span class="pit-count" data-slot="pit-count"></span>
         </div>
         <span class="gap-delta" data-slot="gap">--</span>
-        <span class="battle-tag" data-slot="battle" style="display: none;" title="Active Battle &bull; Click to Compare">BATTLE</span>
+        <button type="button" class="battle-tag" data-slot="battle" style="display: none;" title="Close interval &bull; Click to Compare">CLOSE BATTLE</button>
     `;
 
     // Row click handler: selects this driver for head-to-head cockpit comparison
     row.addEventListener('click', (e) => {
         handleDriverSelect(driverNumber, e);
+    });
+
+    row.querySelector('[data-slot="battle"]').addEventListener('click', (event) => {
+        event.stopPropagation();
+        const defender = Number(event.currentTarget.dataset.defender);
+        if (!Number.isInteger(defender) || defender <= 0 || defender === driverNumber) return;
+        state.selectedDrivers = [driverNumber, defender];
+        sendAction({ action: 'select_drivers', drivers: state.selectedDrivers });
+        updateDuelLabel();
+        updateSelectedRowClasses();
     });
 
     rowElements.set(driverNumber, row);
@@ -195,7 +205,14 @@ function handleTowerFrame(frame) {
     const intervals = frame.intervals || {};
     const battles = frame.battles || [];
 
-    if (positions.length === 0) return;
+    if (positions.length === 0) {
+        for (const row of rowElements.values()) {
+            const badge = row.querySelector('[data-slot="battle"]');
+            badge.style.display = 'none';
+            delete badge.dataset.defender;
+        }
+        return;
+    }
 
     // Build sortable standings array
     const standings = [];
@@ -343,11 +360,17 @@ function handleTowerFrame(frame) {
         const battleEl = row.querySelector('[data-slot="battle"]');
         const activeBattle = battleMap.get(item.driverNumber);
         if (battleEl) {
-            if (activeBattle && activeBattle.gap <= 1.000) {
+            if (activeBattle && Number.isInteger(activeBattle.defender) &&
+                activeBattle.defender > 0 && activeBattle.defender !== item.driverNumber &&
+                Number.isFinite(activeBattle.gap) && activeBattle.gap > 0 && activeBattle.gap <= 1.000) {
+                const defenderName = driverMetadata.get(activeBattle.defender)?.acronym || `#${activeBattle.defender}`;
                 battleEl.style.display = 'inline-flex';
-                battleEl.title = `Battling ahead: ${activeBattle.gap.toFixed(3)}s gap • Click to compare`;
+                battleEl.dataset.defender = String(activeBattle.defender);
+                battleEl.title = `Close to ${defenderName}: ${activeBattle.gap.toFixed(3)}s reported interval • Not a predicted overtake or DRS eligibility • Click to compare`;
+                battleEl.setAttribute('aria-label', `Compare ${item.meta.acronym} with ${defenderName}: close battle`);
             } else {
                 battleEl.style.display = 'none';
+                delete battleEl.dataset.defender;
             }
         }
 

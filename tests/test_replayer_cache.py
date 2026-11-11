@@ -11,38 +11,41 @@ from pitwall_telemetry_engine.ingestion.timeline_replayer import (
     SessionCache,
     SessionDataset,
     TimelineReplayer,
-    session_cache,
 )
 from pitwall_telemetry_engine.schemas.race_control import RaceControlMessage
 
 
-def test_session_dataset_loading():
-    """Verify SessionDataset loads metadata and 20-driver grid properly."""
-    dataset = session_cache.get_sync(9472)
-    assert dataset.session_key == 9472
-    assert len(dataset.drivers) > 0
+def test_session_dataset_loading(race_cache):
+    """Verify SessionDataset loads metadata and synthetic grid properly."""
+    session_cache, session_key = race_cache
+    dataset = session_cache.get_sync(session_key)
+    assert dataset.session_key == session_key
+    assert set(dataset.drivers) == {1, 16, 55}
     assert dataset.end_time > dataset.start_time
-    assert len(dataset.timelines) > 0
+    assert set(dataset.timelines) == set(dataset.drivers)
 
 
-def test_session_cache_identity():
+def test_session_cache_identity(race_cache):
     """Verify second access returns identical cached object in memory (0ms lookup)."""
-    d1 = session_cache.get_sync(9472)
-    d2 = session_cache.get_sync(9472)
+    session_cache, session_key = race_cache
+    d1 = session_cache.get_sync(session_key)
+    d2 = session_cache.get_sync(session_key)
     assert d1 is d2
 
 
 @pytest.mark.anyio
-async def test_session_cache_async_get():
+async def test_session_cache_async_get(race_cache):
     """Verify async get with stampede protection returns cached dataset."""
-    dataset = await session_cache.get(9472)
+    session_cache, session_key = race_cache
+    dataset = await session_cache.get(session_key)
     assert dataset is not None
-    assert dataset.session_key == 9472
+    assert dataset.session_key == session_key
 
 
-def test_independent_replayer_cursors():
+def test_independent_replayer_cursors(race_cache):
     """Verify multiple replayers share dataset but maintain isolated playback state."""
-    dataset = session_cache.get_sync(9472)
+    session_cache, session_key = race_cache
+    dataset = session_cache.get_sync(session_key)
 
     replayer_a = TimelineReplayer(dataset, fps=30)
     replayer_b = TimelineReplayer(dataset, fps=30)
@@ -94,8 +97,9 @@ async def test_cached_session_is_available_during_another_load(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_interactive_replay_can_seek_and_resume_after_finish():
-    replayer = TimelineReplayer(session_cache.get_sync(9472))
+async def test_interactive_replay_can_seek_and_resume_after_finish(race_cache):
+    session_cache, session_key = race_cache
+    replayer = TimelineReplayer(session_cache.get_sync(session_key))
     replayer.seek(replayer.end_time - replayer.frame_interval / 2)
 
     async with aclosing(replayer.stream_frames(keep_alive_at_end=True)) as frames:
@@ -160,16 +164,19 @@ def test_race_control_tracks_cautions_and_drs_independently():
         assert state["drs_enabled"] is drs_enabled
 
 
-def test_replay_reports_tyres_for_the_drivers_lap_after_seeking():
-    replayer = TimelineReplayer(session_cache.get_sync(9472))
+def test_replay_reports_tyres_for_the_drivers_lap_after_seeking(race_cache):
+    session_cache, session_key = race_cache
+    replayer = TimelineReplayer(session_cache.get_sync(session_key))
     lap_start = next(
         lap.date_start
         for lap in replayer.laps_by_driver[1]
-        if lap.lap_number == 18 and lap.date_start is not None
+        if lap.lap_number == 2 and lap.date_start is not None
     )
     for offset, compound in [(-1, "SOFT"), (0, "HARD"), (-1, "SOFT")]:
         replayer.seek(lap_start.timestamp() + offset)
-        assert replayer.assemble_frame()["intervals"]["1"]["tyre_compound"] == compound
+        intervals = replayer.assemble_frame()["intervals"]
+        assert intervals["1"]["tyre_compound"] == compound
+        assert intervals["16"]["tyre_compound"] == "SOFT"
 
 
 def test_session_cache_lru_eviction():
